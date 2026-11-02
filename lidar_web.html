@@ -1,0 +1,1845 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lidar LD06 – acquisition et cartographie</title>
+<style>
+  /* ------------------------------------------------------------------
+     Jetons de design
+     Brume (fond), craie (surfaces), encre, bleu géomètre (actions, étapes faites),
+     jaune balise (réservé à l'étape en cours).
+     ------------------------------------------------------------------ */
+  :root {
+    --mist: #edf0f3; --chalk: #ffffff; --ink: #14202b; --muted: #5b6875;
+    --hair: #d9dfe5; --hair-strong: #bcc5ce;
+    --blue: #1f3fa6; --blue-ink: #ffffff; --blue-soft: #e4e9f8;
+    --beacon: #ffc72c; --beacon-ink: #2a2000;
+    --ok: #1f7a4a; --warn: #9a5b00; --bad: #b3261e;
+    --canvas: #fbfcfd; --grid: #e8ecf0; --axis: #c2cad3; --live: #1f3fa6; --seg: #d9730d;
+    --font-display: "Bahnschrift", "DIN Alternate", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --mist: #0d1319; --chalk: #151d26; --ink: #e8edf2; --muted: #97a4b1;
+      --hair: #25303b; --hair-strong: #364452;
+      --blue: #8ca4ff; --blue-ink: #0b1430; --blue-soft: #1c2740;
+      --beacon: #ffc72c; --beacon-ink: #2a2000;
+      --ok: #52c98a; --warn: #f0b34a; --bad: #ff8a80;
+      --canvas: #0a0f14; --grid: #17202a; --axis: #2c3846; --live: #8ccfff; --seg: #ffb454;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--mist); color: var(--ink); font: 14px/1.45 var(--font); font-variant-numeric: tabular-nums; }
+  h1, h2, h3, p { margin: 0; }
+
+  .app { display: grid; grid-template-columns: 392px 1fr; height: 100vh; }
+  .side { overflow-y: auto; padding: 18px 18px 40px; border-right: 1px solid var(--hair); }
+  main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+  /* ---------- en-tête ---------- */
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .mark { width: 38px; height: 38px; color: var(--ink); flex: none; }
+  .brand h1 { font: 600 21px/1.1 var(--font-display); letter-spacing: .01em; }
+  .brand p { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .brand .grow { flex: 1; min-width: 0; }
+  .conn { display: flex; align-items: center; gap: 9px; margin: 16px 0 6px; padding: 8px 12px;
+          border: 1px solid var(--hair); border-radius: 999px; background: var(--chalk); font-weight: 600; font-size: 13px; cursor: pointer; }
+  .conn .led { width: 9px; height: 9px; border-radius: 50%; background: var(--hair-strong); flex: none; }
+  .conn[data-state=live] .led { background: var(--ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 22%, transparent); }
+  .conn[data-state=sim] .led { background: var(--blue); box-shadow: 0 0 0 4px color-mix(in srgb, var(--blue) 22%, transparent); }
+  .conn[data-state=error] .led { background: var(--bad); }
+  .note { border-radius: 10px; padding: 9px 12px; font-size: 13px; margin: 10px 0; border: 1px solid; }
+  .note.warn { background: color-mix(in srgb, var(--beacon) 22%, var(--chalk)); border-color: color-mix(in srgb, var(--beacon) 70%, var(--chalk)); color: var(--ink); }
+
+  /* ---------- chronologie ---------- */
+  .timeline { list-style: none; margin: 18px 0 0; padding: 0; }
+  .step { display: grid; grid-template-columns: 34px 1fr; gap: 12px; padding-bottom: 12px; }
+  .rail { position: relative; display: flex; justify-content: center; }
+  .step:not(:last-child) .rail::after {
+    content: ""; position: absolute; left: 50%; top: 40px; bottom: -8px; width: 2px; margin-left: -1px;
+    background: repeating-linear-gradient(to bottom, var(--hair-strong) 0 4px, transparent 4px 9px);
+  }
+  .step[data-line=done]:not(:last-child) .rail::after { background: var(--blue); }
+
+  .node { position: relative; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; flex: none;
+          font: 600 16px/1 var(--font-display); background: var(--mist); color: var(--muted);
+          border: 2px solid var(--hair-strong); margin-top: 7px; }
+  .node .tick { display: none; width: 16px; height: 16px; }
+  .step[data-state=current] .node { background: var(--beacon); color: var(--beacon-ink); border-color: var(--beacon); }
+  .step[data-state=done] .node { background: var(--blue); color: var(--blue-ink); border-color: var(--blue); }
+  .step[data-state=done] .node .num { display: none; }
+  .step[data-state=done] .node .tick { display: block; }
+  .node.pulse { animation: beacon 1.6s ease-out 3; }
+  @keyframes beacon {
+    0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--beacon) 75%, transparent); }
+    80%, 100% { box-shadow: 0 0 0 12px transparent; }
+  }
+
+  .card { border-radius: 12px; border: 1px solid var(--hair); background: transparent; min-width: 0; }
+  .step[data-state=current] .card { background: var(--chalk); border-color: var(--hair-strong);
+          box-shadow: inset 4px 0 0 var(--beacon), 0 10px 26px -16px rgba(20, 32, 43, .45); }
+  .step[data-state=done] .card { background: var(--chalk); }
+  .step-h { font: inherit; }
+  .head { all: unset; box-sizing: border-box; width: 100%; display: grid; grid-template-columns: 1fr auto 18px; gap: 10px;
+          align-items: center; padding: 12px 14px; cursor: pointer; border-radius: 12px; }
+  .head:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .head .t { display: block; font: 600 16.5px/1.2 var(--font-display); letter-spacing: .01em; }
+  .head .s { display: block; color: var(--muted); font-size: 13px; margin-top: 3px; }
+  .step[data-state=todo] .head .t { color: var(--muted); }
+  .chip { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--hair-strong); color: var(--muted); white-space: nowrap; }
+  .step[data-state=current] .chip { background: var(--beacon); border-color: var(--beacon); color: var(--beacon-ink); }
+  .step[data-state=done] .chip { border-color: color-mix(in srgb, var(--ok) 50%, transparent); color: var(--ok); }
+  .chev { width: 16px; height: 16px; color: var(--muted); transition: transform .2s ease; }
+  .step.open .chev { transform: rotate(180deg); }
+
+  .body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .24s ease; }
+  .step.open .body { grid-template-rows: 1fr; }
+  .body > .inner { overflow: hidden; min-height: 0; }
+  .pad { padding: 2px 14px 16px; }
+  .pad > * + * { margin-top: 12px; }
+
+  /* ---------- champs et boutons ---------- */
+  .row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+  .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .field > label, .lab { font-size: 12.5px; color: var(--muted); font-weight: 600; }
+  input[type=number], input[type=text], select {
+    font: inherit; color: var(--ink); background: var(--mist); border: 1px solid var(--hair-strong);
+    border-radius: 8px; padding: 0 10px; height: 36px; width: 100%; min-width: 0;
+  }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .grid2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  input:focus-visible, select:focus-visible, button:focus-visible, summary:focus-visible, canvas:focus-visible {
+    outline: 2px solid var(--blue); outline-offset: 2px;
+  }
+  .btn { font: 600 13.5px/1 var(--font); height: 36px; padding: 0 14px; border-radius: 9px; cursor: pointer;
+         color: var(--ink); background: var(--chalk); border: 1px solid var(--hair-strong); white-space: nowrap; }
+  .btn:hover:not(:disabled) { border-color: var(--blue); color: var(--blue); }
+  .btn.primary { background: var(--blue); color: var(--blue-ink); border-color: var(--blue); }
+  .btn.primary:hover:not(:disabled) { color: var(--blue-ink); filter: brightness(1.12); }
+  .btn.quiet { border-color: transparent; background: transparent; color: var(--muted); }
+  .btn.quiet:hover:not(:disabled) { color: var(--blue); border-color: transparent; background: var(--blue-soft); }
+  .btn.danger { color: var(--bad); }
+  .btn.sm { height: 30px; padding: 0 10px; font-size: 12.5px; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .check { display: flex; gap: 8px; align-items: center; font-size: 13.5px; cursor: pointer; }
+  input[type=checkbox], input[type=radio] { accent-color: var(--blue); width: 16px; height: 16px; margin: 0; }
+  .status { font-size: 13px; color: var(--muted); min-height: 18px; }
+  .status:empty { display: none; }
+  .status.ok { color: var(--ok); } .status.err { color: var(--bad); } .status.warn { color: var(--warn); }
+  .hint { color: var(--muted); font-size: 12.5px; }
+  code { font: 12px/1.3 ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--mist); padding: 1px 5px; border-radius: 4px; }
+  details.sub > summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--muted); padding: 2px 0; }
+  details.sub[open] > summary { color: var(--ink); }
+  details.sub > .subbody { padding-top: 8px; display: grid; gap: 10px; }
+  pre.mon { margin: 0; padding: 8px 10px; background: var(--mist); border-radius: 8px; border: 1px solid var(--hair);
+            font: 11.5px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; color: var(--muted);
+            max-height: 150px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+
+  /* ---------- liste des scans ---------- */
+  .scan { position: relative; border: 1px solid var(--hair); border-radius: 10px; padding: 8px 10px 9px 14px; cursor: pointer; background: var(--chalk); }
+  .scan + .scan { margin-top: 8px; }
+  .scan::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 4px; border-radius: 0 3px 3px 0; background: var(--c); }
+  .scan.sel { border-color: var(--blue); background: var(--blue-soft); }
+  .scan .top { display: flex; align-items: center; gap: 8px; }
+  .scan .name { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .scan .pts { color: var(--muted); font-size: 12px; }
+  .scan .pose { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 7px; }
+  .scan .pose input { height: 30px; padding: 0 8px; }
+  .scan button.x { all: unset; cursor: pointer; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); }
+  .scan button.x:hover { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
+  .scan button.x:focus-visible { outline: 2px solid var(--blue); }
+  .empty-list { color: var(--muted); font-size: 13px; padding: 4px 0; }
+
+  /* ---------- zone principale ---------- */
+  .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 10px 16px; background: var(--chalk); border-bottom: 1px solid var(--hair); }
+  .seg { display: inline-flex; padding: 3px; gap: 2px; border: 1px solid var(--hair-strong); border-radius: 11px; background: var(--mist); }
+  .seg button { all: unset; box-sizing: border-box; cursor: pointer; font: 600 13.5px/1 var(--font); padding: 8px 18px; border-radius: 8px; color: var(--muted); }
+  .seg button[aria-selected=true] { background: var(--blue); color: var(--blue-ink); }
+  .seg button:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+  .toolbar .opts { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .vsep { width: 1px; height: 22px; background: var(--hair); }
+  .stage { position: relative; flex: 1; min-height: 0; background: var(--canvas); }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  .hud { position: absolute; top: 14px; left: 14px; display: flex; gap: 14px; padding: 8px 14px; border-radius: 10px;
+         background: var(--chalk); border: 1px solid var(--hair); font-size: 12.5px; color: var(--muted); pointer-events: none; }
+  .hud[hidden] { display: none; }
+  .hud b { font: 600 15px/1 var(--font-display); color: var(--ink); margin-right: 3px; }
+  .coords { position: absolute; right: 14px; bottom: 12px; font-size: 12px; color: var(--muted); pointer-events: none; }
+  .empty { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px; text-align: center; padding: 24px; }
+  .empty[hidden] { display: none; }
+  .empty { pointer-events: none; }
+  .emptybox { pointer-events: auto; display: grid; justify-items: center; gap: 10px; padding: 22px 28px 24px; border-radius: 18px;
+              background: color-mix(in srgb, var(--canvas) 92%, transparent); border: 1px solid var(--hair); max-width: 440px; }
+  .emptybox .row { justify-content: center; margin-top: 6px; }
+  .sweep { transform-origin: 48px 48px; animation: sweep 6s linear infinite; }
+  @keyframes sweep { to { transform: rotate(360deg); } }
+  .empty svg { width: 96px; height: 96px; color: var(--axis); }
+  .empty h2 { font: 600 20px/1.2 var(--font-display); }
+  .empty p { color: var(--muted); max-width: 38ch; }
+  .toast { position: absolute; left: 50%; bottom: 22px; transform: translate(-50%, 16px); opacity: 0; pointer-events: none;
+           background: var(--ink); color: var(--mist); padding: 9px 16px; border-radius: 10px; font-weight: 600; font-size: 13px;
+           transition: opacity .2s ease, transform .2s ease; max-width: 90%; }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  /* ---------- diagnostic ---------- */
+  dialog { border: 1px solid var(--hair-strong); border-radius: 16px; padding: 0; width: min(560px, 94vw); background: var(--chalk); color: var(--ink); }
+  dialog::backdrop { background: rgba(10, 16, 22, .55); }
+  .dlg { padding: 20px 22px 18px; display: grid; gap: 14px; max-height: 86vh; overflow: auto; }
+  .dlg-head { display: flex; justify-content: space-between; align-items: center; }
+  .dlg h2 { font: 600 20px/1.2 var(--font-display); }
+  .dlg h3 { font: 600 15px/1.2 var(--font-display); margin-top: 4px; }
+  .checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  .checks li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; padding: 9px 12px; border-radius: 10px; background: var(--mist); }
+  .checks .ic { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 12px; margin-top: 1px; }
+  .checks .ok .ic { background: var(--ok); color: var(--chalk); }
+  .checks .bad .ic { background: var(--bad); color: var(--chalk); }
+  .checks .warn .ic { background: var(--beacon); color: var(--beacon-ink); }
+  .checks b { display: block; }
+  .checks span.d { color: var(--muted); font-size: 13px; }
+  .fixlist { margin: 0; padding-left: 20px; display: grid; gap: 8px; font-size: 13.5px; }
+  .dlg-foot { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .body, .chev, .toast { transition: none; }
+    .node.pulse, .sweep { animation: none; }
+  }
+  @media (max-width: 900px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: auto minmax(70vh, 1fr); height: auto; min-height: 100vh; }
+    .side { border-right: 0; border-bottom: 1px solid var(--hair); }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+<aside class="side" aria-label="Configuration">
+  <header class="brand">
+    <svg class="mark" viewBox="0 0 40 40" aria-hidden="true">
+      <circle cx="20" cy="20" r="17" fill="none" stroke="currentColor" stroke-width="2"/>
+      <circle cx="20" cy="20" r="10" fill="none" stroke="currentColor" stroke-width="2" opacity=".45"/>
+      <path d="M20 20 L20 3 A17 17 0 0 1 34.7 11.5 Z" fill="var(--beacon)"/>
+      <circle cx="20" cy="20" r="2.6" fill="currentColor"/>
+    </svg>
+    <div class="grow"><h1>Lidar LD06</h1><p>Acquisition et cartographie</p></div>
+    <button class="btn quiet sm" id="btnDiag" type="button">Diagnostic</button>
+  </header>
+
+  <div class="conn" id="connPill" data-state="idle" role="status">
+    <span class="led" aria-hidden="true"></span><span id="connPillText">Non connecté</span>
+  </div>
+  <div id="browserWarn" class="note warn" hidden>
+    Ce navigateur ne gère pas l'accès série. Ouvrez cette page dans <b>Chrome</b> ou <b>Edge</b> sur ordinateur.
+    La simulation et l'import de fichiers restent disponibles.
+  </div>
+
+  <ol class="timeline" id="timeline">
+
+    <!-- 1. Connexion -->
+    <li class="step open" data-step="connect" data-state="current" data-line="todo">
+      <div class="rail"><span class="node" aria-hidden="true"><span class="num">1</span>
+        <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
+      <section class="card">
+        <h2 class="step-h"><button type="button" class="head" aria-expanded="true" aria-controls="b-connect">
+          <span><span class="t">Connecter le lidar</span><span class="s" data-summary></span></span>
+          <span class="chip" data-chip></span>
+          <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg>
+        </button></h2>
+        <div class="body" id="b-connect"><div class="inner"><div class="pad">
+          <div class="row">
+            <button id="btnConnect" class="btn primary" type="button">Connecter le lidar</button>
+            <button id="btnDisconnect" class="btn" type="button" disabled>Déconnecter</button>
+            <button id="btnSim" class="btn" type="button">Simulation</button>
+          </div>
+          <div class="field" style="max-width:160px">
+            <label for="baud">Vitesse (bauds)</label>
+            <select id="baud"><option>115200</option><option>230400</option><option>921600</option></select>
+          </div>
+          <div class="status" id="connStatus" aria-live="polite"></div>
+          <div id="connHelp" hidden><button class="btn sm" id="btnDiagInline" type="button">Ouvrir le diagnostic</button></div>
+          <p class="hint">Fermez le moniteur série d'Arduino avant de connecter. Le sketch doit appeler
+            <code>printScanCSV</code> (conseillé) ou <code>printScanTeleplot</code>.</p>
+          <details class="sub" id="monBox"><summary>Données reçues</summary>
+            <div class="subbody">
+              <pre class="mon" id="mon">Rien reçu pour l'instant.</pre>
+              <div class="hint"><span id="monBytes">0</span> octets reçus</div>
+            </div>
+          </details>
+          <details class="sub"><summary>Orientation du capteur</summary>
+            <div class="subbody">
+              <label class="check"><input type="checkbox" id="optTeleFlip" checked> Teleplot : annuler le signe « − » de y de la librairie</label>
+              <div class="row">
+                <div class="field" style="width:120px"><label for="optOffset">Décalage (°)</label><input type="number" id="optOffset" value="0" step="1"></div>
+                <label class="check" style="padding-bottom:8px"><input type="checkbox" id="optMirror"> Miroir</label>
+              </div>
+              <p class="hint">À régler avec un obstacle de position connue : un carton à gauche du robot doit apparaître à gauche.</p>
+            </div>
+          </details>
+        </div></div></div>
+      </section>
+    </li>
+
+    <!-- 2. Capture -->
+    <li class="step" data-step="capture" data-state="todo" data-line="todo">
+      <div class="rail"><span class="node" aria-hidden="true"><span class="num">2</span>
+        <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
+      <section class="card">
+        <h2 class="step-h"><button type="button" class="head" aria-expanded="false" aria-controls="b-capture">
+          <span><span class="t">Capturer des scans</span><span class="s" data-summary></span></span>
+          <span class="chip" data-chip></span>
+          <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg>
+        </button></h2>
+        <div class="body" id="b-capture"><div class="inner"><div class="pad">
+          <div class="grid2">
+            <div class="field"><label for="prefix">Nom de la position</label><input type="text" id="prefix" value="pos1"></div>
+            <div class="field"><label for="nCap">Tours à capturer</label><input type="number" id="nCap" value="1" min="1" max="50"></div>
+          </div>
+          <div>
+            <div class="lab" style="margin-bottom:6px">Position du robot pour ce scan</div>
+            <div class="seg" role="radiogroup" aria-label="Référence de la position" style="display:flex;margin-bottom:10px">
+              <label class="check" style="flex:1;justify-content:center;padding:6px 4px"><input type="radio" name="poseMode" value="abs" checked> Depuis l’origine</label>
+              <label class="check" style="flex:1;justify-content:center;padding:6px 4px"><input type="radio" name="poseMode" value="rel"> Depuis le précédent</label>
+            </div>
+            <div class="grid3">
+              <div class="field"><label for="capX">x (m)</label><input type="number" id="capX" value="0" step="0.01"></div>
+              <div class="field"><label for="capY">y (m)</label><input type="number" id="capY" value="0" step="0.01"></div>
+              <div class="field"><label for="capT">θ (°)</label><input type="number" id="capT" value="0" step="1"></div>
+            </div>
+          </div>
+          <p class="hint" id="poseHint"></p>
+          <div class="row" style="align-items:center">
+            <button id="btnCapture" class="btn primary" type="button">Capturer (Espace)</button>
+            <label class="check"><input type="checkbox" id="optFreeze"> Figer l'affichage</label>
+          </div>
+          <div class="status" id="capStatus" aria-live="polite"></div>
+          <p class="hint">Le robot reste immobile pendant la capture. Origine : le repère du premier scan (0, 0, 0). Depuis le scan précédent : avant, gauche et rotation sont mesurés dans le repère du robot au scan précédent. La pose se corrige ensuite à l'étape 3.</p>
+        </div></div></div>
+      </section>
+    </li>
+
+    <!-- 3. Placement -->
+    <li class="step" data-step="place" data-state="todo" data-line="todo">
+      <div class="rail"><span class="node" aria-hidden="true"><span class="num">3</span>
+        <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
+      <section class="card">
+        <h2 class="step-h"><button type="button" class="head" aria-expanded="false" aria-controls="b-place">
+          <span><span class="t">Placer les scans</span><span class="s" data-summary></span></span>
+          <span class="chip" data-chip></span>
+          <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg>
+        </button></h2>
+        <div class="body" id="b-place"><div class="inner"><div class="pad">
+          <button class="btn" id="btnGoMap" type="button">Ouvrir l'onglet Carte</button>
+          <div id="scanList"></div>
+          <div class="row">
+            <button id="btnImport" class="btn sm" type="button">Importer des fichiers</button>
+            <button id="btnClear" class="btn sm danger" type="button">Tout effacer</button>
+            <input type="file" id="fileImport" multiple accept=".csv,.txt,.json" hidden>
+          </div>
+          <p class="hint">Dans l'onglet Carte, choisissez « Déplacer le scan choisi », puis faites glisser (Maj pour tourner). Flèches, <code>,</code> et <code>.</code> affinent la pose.</p>
+        </div></div></div>
+      </section>
+    </li>
+
+    <!-- 4. Cartes -->
+    <li class="step" data-step="maps" data-state="todo" data-line="todo">
+      <div class="rail"><span class="node" aria-hidden="true"><span class="num">4</span>
+        <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
+      <section class="card">
+        <h2 class="step-h"><button type="button" class="head" aria-expanded="false" aria-controls="b-maps">
+          <span><span class="t">Régler les cartes</span><span class="s" data-summary></span></span>
+          <span class="chip" data-chip></span>
+          <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg>
+        </button></h2>
+        <div class="body" id="b-maps"><div class="inner"><div class="pad">
+          <div class="grid2">
+            <div class="field"><label for="gridRes">Cellule de la grille (m)</label>
+              <select id="gridRes"><option>0.03</option><option selected>0.05</option><option>0.10</option></select></div>
+            <div class="field"><label for="gridForget">Oubli par scan</label><input type="number" id="gridForget" value="1" min="0.5" max="1" step="0.01"></div>
+            <div class="field"><label for="angTol">Écart d'angle (°)</label><input type="number" id="angTol" value="10" step="1"></div>
+            <div class="field"><label for="distTol">Écart latéral (m)</label><input type="number" id="distTol" value="0.06" step="0.01"></div>
+            <div class="field"><label for="gapTol">Trou admis (m)</label><input type="number" id="gapTol" value="0.15" step="0.01"></div>
+            <div class="field"><label for="minWeight">Observations min.</label><input type="number" id="minWeight" value="1" step="1" min="1"></div>
+          </div>
+          <label class="check"><input type="checkbox" id="autoBuild" checked> Recalculer à chaque changement</label>
+          <div class="row"><button id="btnBuild" class="btn" type="button">Recalculer les cartes</button></div>
+          <div class="status" id="mapStatus"></div>
+          <p class="hint">Cette étape est facultative : les valeurs par défaut fonctionnent pour une salle de classe.</p>
+        </div></div></div>
+      </section>
+    </li>
+
+    <!-- 5. Export -->
+    <li class="step" data-step="export" data-state="todo" data-line="todo">
+      <div class="rail"><span class="node" aria-hidden="true"><span class="num">5</span>
+        <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
+      <section class="card">
+        <h2 class="step-h"><button type="button" class="head" aria-expanded="false" aria-controls="b-export">
+          <span><span class="t">Exporter</span><span class="s" data-summary></span></span>
+          <span class="chip" data-chip></span>
+          <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg>
+        </button></h2>
+        <div class="body" id="b-export"><div class="inner"><div class="pad">
+          <button id="btnZip" class="btn primary" type="button">Tout exporter (.zip)</button>
+          <div class="row">
+            <button id="btnExpScan" class="btn sm" type="button">Scan affiché</button>
+            <button id="btnExpVec" class="btn sm" type="button">Carte vectorielle</button>
+            <button id="btnExpGrid" class="btn sm" type="button">Grille</button>
+            <button id="btnExpPng" class="btn sm" type="button">Image</button>
+          </div>
+          <p class="hint">Le .zip contient <code>scans/*.csv</code>, <code>poses.json</code>, la carte vectorielle, la grille, une image et un <code>projet.json</code> ré-importable. Les outils Python le lisent directement.</p>
+        </div></div></div>
+      </section>
+    </li>
+  </ol>
+</aside>
+
+<main>
+  <div class="toolbar">
+    <div class="seg" role="tablist" aria-label="Vue">
+      <button role="tab" id="tabLive" aria-selected="true" type="button">Direct</button>
+      <button role="tab" id="tabMap" aria-selected="false" type="button">Carte</button>
+    </div>
+    <div class="opts" id="liveOpts">
+      <label class="check"><input type="checkbox" id="optLiveSeg"> Segments</label>
+      <label class="check"><input type="checkbox" id="optIntensity" checked> Intensité</label>
+    </div>
+    <div class="opts" id="mapOpts" style="display:none">
+      <label class="check"><input type="checkbox" id="layPts" checked> Points</label>
+      <label class="check"><input type="checkbox" id="layGrid" checked> Grille</label>
+      <label class="check"><input type="checkbox" id="laySeg" checked> Segments</label>
+      <span class="vsep"></span>
+      <label class="check"><input type="radio" name="mode" value="view" checked> Déplacer la vue</label>
+      <label class="check"><input type="radio" name="mode" value="scan"> Déplacer le scan choisi</label>
+    </div>
+    <span style="flex:1"></span>
+    <button class="btn sm" id="btnFit" type="button">Ajuster la vue</button>
+  </div>
+  <div class="stage">
+    <canvas id="cv" tabindex="0" aria-label="Vue du lidar"></canvas>
+    <div class="hud" id="hud" hidden></div>
+    <div class="coords" id="footRight"></div>
+    <div class="empty" id="empty" hidden></div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </div>
+</main>
+</div>
+
+<dialog id="diag" aria-labelledby="diagTitle">
+  <form method="dialog" class="dlg">
+    <div class="dlg-head"><h2 id="diagTitle">Diagnostic de connexion</h2><button class="btn quiet sm" value="close">Fermer</button></div>
+    <ul class="checks" id="diagChecks"></ul>
+    <h3>Si la liste des ports est vide</h3>
+    <ol class="fixlist">
+      <li>Utilisez un câble USB qui transmet des données : certains câbles ne servent qu'à charger.</li>
+      <li>Ouvrez le Gestionnaire de périphériques de Windows, section « Ports (COM) ». Un port « CP210x » ou « CH340 » doit apparaître quand vous branchez l'ESP32.</li>
+      <li>Si la carte est listée sous « Autres périphériques » avec un triangle jaune, installez le pilote CP210x (Silicon Labs) ou CH340 (WCH).</li>
+      <li>Fermez ce qui peut occuper le port : moniteur série d'Arduino, Teleplot, un autre onglet de cette page.</li>
+      <li>Débranchez, rebranchez, puis appuyez une fois sur le bouton EN de la carte.</li>
+      <li>Si le port apparaît dans l'IDE Arduino mais pas ici, ouvrez la page dans Chrome ou Edge, pas dans une fenêtre intégrée à une application.</li>
+    </ol>
+    <div class="dlg-foot">
+      <button type="button" class="btn" id="btnDiagRun">Relancer les tests</button>
+      <button type="button" class="btn primary" id="btnDiagConnect">Essayer de se connecter</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+/* ======================================================================
+   NOYAU (calcul pur, sans DOM) : même logique que les modules Python
+   ====================================================================== */
+/* CORE-START */
+const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+const EPS_LEN = 1e-9, EPS_SIN = 1e-9;
+const MIN_RANGE = 0.02, MAX_RANGE = 12.0;
+
+const mod360 = a => ((a % 360) + 360) % 360;
+
+/* ---------- scans ---------- */
+function makeScan(name, angDeg, distM, inten) {
+  const idx = [];
+  for (let i = 0; i < distM.length; i++) {
+    const r = distM[i];
+    if (isFinite(r) && r >= MIN_RANGE && r <= MAX_RANGE && isFinite(angDeg[i])) idx.push(i);
+  }
+  idx.sort((a, b) => mod360(angDeg[a]) - mod360(angDeg[b]));
+  const n = idx.length;
+  const scan = { name, angles: new Float64Array(n), ranges: new Float64Array(n),
+                 inten: new Float64Array(n), pose: { x: 0, y: 0, th: 0 } };
+  for (let k = 0; k < n; k++) {
+    scan.angles[k] = mod360(angDeg[idx[k]]) * D2R;
+    scan.ranges[k] = distM[idx[k]];
+    scan.inten[k] = inten ? inten[idx[k]] : 255;
+  }
+  return scan;
+}
+
+function localPoints(scan) {
+  const n = scan.ranges.length, out = new Float64Array(2 * n);
+  for (let i = 0; i < n; i++) {
+    out[2 * i] = scan.ranges[i] * Math.cos(scan.angles[i]);
+    out[2 * i + 1] = scan.ranges[i] * Math.sin(scan.angles[i]);
+  }
+  return out;
+}
+
+function transformXY(x, y, pose) {
+  const c = Math.cos(pose.th * D2R), s = Math.sin(pose.th * D2R);
+  return [c * x - s * y + pose.x, s * x + c * y + pose.y];
+}
+
+function worldPoints(scan, pose) {
+  const loc = localPoints(scan), out = new Float64Array(loc.length);
+  const c = Math.cos(pose.th * D2R), s = Math.sin(pose.th * D2R);
+  for (let i = 0; i < loc.length; i += 2) {
+    out[i] = c * loc[i] - s * loc[i + 1] + pose.x;
+    out[i + 1] = s * loc[i] + c * loc[i + 1] + pose.y;
+  }
+  return out;
+}
+
+/* ---------- lecture du flux série ---------- */
+class LidarParser {
+  /* onScan(rows) reçoit [[angle_deg, distance_mm, intensité], ...] */
+  constructor(onScan, opts = {}) {
+    this.onScan = onScan;
+    this.teleFlipY = opts.teleFlipY !== false;
+    this.buf = ''; this.rows = []; this.lastAng = null;
+  }
+  feed(text) {
+    this.buf += text;
+    let i;
+    while ((i = this.buf.indexOf('\n')) >= 0) {
+      const line = this.buf.slice(0, i).trim();
+      this.buf = this.buf.slice(i + 1);
+      this.line(line);
+    }
+    if (this.buf.length > 200000) this.buf = '';
+  }
+  flush() {
+    if (this.rows.length >= 50) this.onScan(this.rows);
+    this.rows = []; this.lastAng = null;
+  }
+  line(l) {
+    if (l === '') { this.flush(); return; }
+    if (l.startsWith('>lidar:')) { this.flush(); this.teleplot(l); return; }
+    const f = l.split(',');
+    if (f.length < 4) return;
+    const v = f.map(Number);
+    if (v.some(x => !isFinite(x))) return;               // en-tête ou ligne de debug
+    const ang = v[1];
+    if (this.lastAng !== null && Math.abs(ang - this.lastAng) > 180) this.flush();
+    this.rows.push([ang, v[2], v[3]]);
+    this.lastAng = ang;
+  }
+  teleplot(l) {
+    let body = l.slice(7);
+    const bar = body.indexOf('|');
+    if (bar >= 0) body = body.slice(0, bar);
+    const rows = [];
+    for (const pair of body.split(';')) {
+      if (!pair) continue;
+      const [xs, ys] = pair.split(':');
+      const x = parseFloat(xs), y = parseFloat(ys);
+      if (!isFinite(x) || !isFinite(y)) continue;
+      const ang = Math.atan2(this.teleFlipY ? -y : y, x) * R2D;
+      rows.push([mod360(ang), Math.hypot(x, y), 255]);
+    }
+    if (rows.length >= 50) this.onScan(rows);
+  }
+}
+
+/* ---------- import de fichiers (formats ESP32, maison, RobotControl, MapTool) ---------- */
+function parseScanText(text, stem) {
+  let fmt = 'esp32';
+  const blocks = [];
+  let cur = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line === '') { if (cur.length) { blocks.push(cur); cur = []; } continue; }
+    if (line.startsWith('#')) continue;
+    const f = line.split(',').map(s => s.trim());
+    if (!isFinite(Number(f[0])) || f[0] === '') {
+      const low = line.toLowerCase();
+      if (low.startsWith('n,angle')) fmt = 'esp32';
+      else if (low.includes('distance_mm')) fmt = 'own';
+      else if (low.includes('distance_m')) fmt = 'robotcontrol';
+      else if (low.includes('r_m')) fmt = 'maptool';
+      continue;
+    }
+    cur.push(f.map(Number));
+  }
+  if (cur.length) blocks.push(cur);
+  const scans = [];
+  blocks.forEach((rows, k) => {
+    rows = rows.filter(r => r.length >= 3);
+    if (rows.length < 10) return;
+    let ang, dist, inten;
+    if (fmt === 'esp32') { ang = rows.map(r => r[1]); dist = rows.map(r => r[2] / 1000); inten = rows.map(r => r[3] ?? 0); }
+    else if (fmt === 'own') { ang = rows.map(r => r[0]); dist = rows.map(r => r[1] / 1000); inten = rows.map(r => r[2]); }
+    else if (fmt === 'robotcontrol') { ang = rows.map(r => r[0]); dist = rows.map(r => r[1]); inten = rows.map(r => r[2]); }
+    else { ang = rows.map(r => r[0]); dist = rows.map(r => r[1]); inten = rows.map(() => 255); }
+    const name = blocks.length === 1 ? stem : `${stem}_${String(k).padStart(3, '0')}`;
+    scans.push(makeScan(name, ang, dist, inten));
+  });
+  return scans;
+}
+
+/* ---------- segments ---------- */
+class Seg {
+  constructor(x1, y1, x2, y2, w = 1) { this.x1 = x1; this.y1 = y1; this.x2 = x2; this.y2 = y2; this.w = w; }
+  get vx() { return this.x2 - this.x1; }
+  get vy() { return this.y2 - this.y1; }
+  get len() { return Math.hypot(this.vx, this.vy); }
+}
+const cross2 = (ax, ay, bx, by) => ax * by - ay * bx;
+
+function pointLineDist(px, py, s) {
+  const L = s.len;
+  if (L === 0) return Math.hypot(px - s.x1, py - s.y1);
+  return Math.abs(cross2(s.vx / L, s.vy / L, px - s.x1, py - s.y1));
+}
+function pointSegDist(px, py, s) {
+  const L2 = s.vx * s.vx + s.vy * s.vy;
+  if (L2 === 0) return Math.hypot(px - s.x1, py - s.y1);
+  let t = ((px - s.x1) * s.vx + (py - s.y1) * s.vy) / L2;
+  t = Math.min(1, Math.max(0, t));
+  return Math.hypot(px - (s.x1 + t * s.vx), py - (s.y1 + t * s.vy));
+}
+
+/* intersection de deux segments -> {x, y, t, u} ou null (parallèles / hors segments) */
+function intersection(a, b, tol = EPS_LEN, sinTol = EPS_SIN) {
+  const la = a.len, lb = b.len;
+  if (la === 0 || lb === 0) return null;
+  const den = cross2(a.vx, a.vy, b.vx, b.vy);
+  if (Math.abs(den) <= sinTol * la * lb) return null;
+  const wx = b.x1 - a.x1, wy = b.y1 - a.y1;
+  const t = cross2(wx, wy, b.vx, b.vy) / den;
+  const u = cross2(wx, wy, a.vx, a.vy) / den;
+  const ma = tol / la, mb = tol / lb;
+  if (t < -ma || t > 1 + ma || u < -mb || u > 1 + mb) return null;
+  return { x: a.x1 + t * a.vx, y: a.y1 + t * a.vy, t, u };
+}
+
+function segmentDistance(a, b) {
+  if (intersection(a, b, 0)) return 0;
+  return Math.min(pointSegDist(a.x1, a.y1, b), pointSegDist(a.x2, a.y2, b),
+                  pointSegDist(b.x1, b.y1, a), pointSegDist(b.x2, b.y2, a));
+}
+
+/* angle entre deux segments (rad). oriented : [0, pi] ; sinon entre droites [0, pi/2] */
+function angleBetween(a, b, oriented = false) {
+  if (a.len === 0 || b.len === 0) return 0;
+  const ang = Math.atan2(Math.abs(cross2(a.vx, a.vy, b.vx, b.vy)), a.vx * b.vx + a.vy * b.vy);
+  return oriented ? ang : Math.min(ang, Math.PI - ang);
+}
+
+function areClose(a, b, angTol = 10 * D2R, distTol = 0.05, gapTol = 0.10) {
+  if (angleBetween(a, b) > angTol) return false;
+  const [longS, shortS] = a.len >= b.len ? [a, b] : [b, a];
+  const lateral = Math.max(pointLineDist(shortS.x1, shortS.y1, longS), pointLineDist(shortS.x2, shortS.y2, longS));
+  if (lateral > distTol) return false;
+  return segmentDistance(a, b) <= gapTol;
+}
+
+function mergeSeg(a, b) {
+  const px = [a.x1, a.x2, b.x1, b.x2], py = [a.y1, a.y2, b.y1, b.y2];
+  let w = [a.len, a.len, b.len, b.len];
+  let ws = w[0] + w[1] + w[2] + w[3];
+  if (ws === 0) { w = [1, 1, 1, 1]; ws = 4; }
+  let cx = 0, cy = 0;
+  for (let i = 0; i < 4; i++) { cx += px[i] * w[i]; cy += py[i] * w[i]; }
+  cx /= ws; cy /= ws;
+  let sxx = 0, sxy = 0, syy = 0;
+  for (let i = 0; i < 4; i++) {
+    const dx = px[i] - cx, dy = py[i] - cy;
+    sxx += w[i] * dx * dx; sxy += w[i] * dx * dy; syy += w[i] * dy * dy;
+  }
+  const th = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+  let dx = Math.cos(th), dy = Math.sin(th);
+  if (dx * a.vx + dy * a.vy < 0) { dx = -dx; dy = -dy; }
+  let tmin = Infinity, tmax = -Infinity;
+  for (let i = 0; i < 4; i++) {
+    const t = (px[i] - cx) * dx + (py[i] - cy) * dy;
+    tmin = Math.min(tmin, t); tmax = Math.max(tmax, t);
+  }
+  return new Seg(cx + tmin * dx, cy + tmin * dy, cx + tmax * dx, cy + tmax * dy, a.w + b.w);
+}
+
+/* découpe `seg` s'il est traversé par `cutter` : on garde le plus long côté.
+   Intersection sur les deux segments, strictement à l'intérieur de seg ; colinéaires jamais
+   découpés ; égalité (à tol près) -> côté de seg.p1. Renvoie seg lui-même s'il ne change pas. */
+function cutBy(seg, cutter, tol = EPS_LEN, sinTol = EPS_SIN) {
+  const L = seg.len;
+  if (L <= tol) return seg;
+  const hit = intersection(seg, cutter, tol, sinTol);
+  if (!hit) return seg;
+  const dFirst = hit.t * L, dLast = (1 - hit.t) * L;
+  if (dFirst <= tol || dLast <= tol) return seg;
+  if (Math.abs(dFirst - dLast) <= tol || dFirst > dLast) return new Seg(seg.x1, seg.y1, hit.x, hit.y, seg.w);
+  return new Seg(hit.x, hit.y, seg.x2, seg.y2, seg.w);
+}
+
+function fitLine(P, s, e) {                  // moindres carrés totaux sur P[s..e]
+  const n = e - s + 1;
+  let cx = 0, cy = 0;
+  for (let i = s; i <= e; i++) { cx += P[2 * i]; cy += P[2 * i + 1]; }
+  cx /= n; cy /= n;
+  let sxx = 0, sxy = 0, syy = 0;
+  for (let i = s; i <= e; i++) {
+    const dx = P[2 * i] - cx, dy = P[2 * i + 1] - cy;
+    sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
+  }
+  sxx /= n; sxy /= n; syy /= n;
+  const th = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+  const lmin = (sxx + syy) / 2 - Math.sqrt(((sxx - syy) / 2) ** 2 + sxy * sxy);
+  return { cx, cy, dx: Math.cos(th), dy: Math.sin(th), rms: Math.sqrt(Math.max(0, lmin)) };
+}
+
+function splitPieces(P, s, e, splitDist, minPts) {      // Douglas-Peucker itératif
+  const pieces = [], stack = [[s, e]];
+  while (stack.length) {
+    const [first, last] = stack.pop();
+    const count = last - first + 1;
+    if (count < minPts) continue;
+    const chord = new Seg(P[2 * first], P[2 * first + 1], P[2 * last], P[2 * last + 1]);
+    if (chord.len === 0) continue;
+    if (last - first < 2) { pieces.push([first, last]); continue; }
+    let worst = -1, wd = -1;
+    for (let k = first + 1; k < last; k++) {
+      const d = pointLineDist(P[2 * k], P[2 * k + 1], chord);
+      if (d > wd) { wd = d; worst = k; }
+    }
+    if (wd > splitDist && count >= 2 * minPts - 1) { stack.push([first, worst]); stack.push([worst, last]); }
+    else pieces.push([first, last]);
+  }
+  pieces.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  return pieces;
+}
+
+/* nuage de points ORDONNÉ par angle (Float64Array x,y,x,y...) -> liste de Seg */
+function extractSegments(P, o = {}) {
+  const splitDist = o.splitDist ?? 0.03, minPts = o.minPoints ?? 5, minLen = o.minLength ?? 0.15;
+  const breakMin = o.breakMin ?? 0.15, breakK = o.breakK ?? 4.0, maxRms = o.maxRms ?? 0.04;
+  const n = P.length / 2;
+  if (n < minPts) return [];
+  const steps = [];
+  let prev = Math.atan2(P[1], P[0]);
+  for (let i = 1; i < n; i++) {
+    const a = Math.atan2(P[2 * i + 1], P[2 * i]);
+    let d = a - prev;
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    steps.push(Math.abs(d)); prev = a;
+  }
+  steps.sort((a, b) => a - b);
+  const m = steps.length;
+  const dTheta = m ? (m % 2 ? steps[(m - 1) / 2] : (steps[m / 2 - 1] + steps[m / 2]) / 2) : 0.01;
+
+  const clusters = [];
+  let start = 0;
+  for (let i = 0; i < n - 1; i++) {
+    const gap = Math.hypot(P[2 * i + 2] - P[2 * i], P[2 * i + 3] - P[2 * i + 1]);
+    const rr = Math.min(Math.hypot(P[2 * i], P[2 * i + 1]), Math.hypot(P[2 * i + 2], P[2 * i + 3]));
+    if (gap > Math.max(breakMin, breakK * rr * dTheta)) { clusters.push([start, i]); start = i + 1; }
+  }
+  clusters.push([start, n - 1]);
+
+  const out = [];
+  for (const [cs, ce] of clusters) {
+    if (ce - cs + 1 < minPts) continue;
+    for (const [ps, pe] of splitPieces(P, cs, ce, splitDist, minPts)) {
+      if (pe - ps + 1 < minPts) continue;
+      const f = fitLine(P, ps, pe);
+      if (f.rms > maxRms) continue;
+      const t1 = (P[2 * ps] - f.cx) * f.dx + (P[2 * ps + 1] - f.cy) * f.dy;
+      const t2 = (P[2 * pe] - f.cx) * f.dx + (P[2 * pe + 1] - f.cy) * f.dy;
+      const s = new Seg(f.cx + t1 * f.dx, f.cy + t1 * f.dy, f.cx + t2 * f.dx, f.cy + t2 * f.dy, 1);
+      if (s.len >= minLen) out.push(s);
+    }
+  }
+  return out;
+}
+
+function segToWorld(s, pose) {
+  const [x1, y1] = transformXY(s.x1, s.y1, pose), [x2, y2] = transformXY(s.x2, s.y2, pose);
+  return new Seg(x1, y1, x2, y2, s.w);
+}
+
+/* ---------- carte vectorielle ---------- */
+class VectorMap {
+  constructor(o = {}) {
+    this.segments = [];
+    this.angTol = (o.angTolDeg ?? 10) * D2R;
+    this.distTol = o.distTol ?? 0.06;
+    this.gapTol = o.gapTol ?? 0.15;
+    this.adaptive = o.adaptiveAngle !== false;
+    this.cutCrossings = o.cutCrossings !== false;
+    this.crossMargin = o.crossMargin ?? 0.05;
+    this.minCrossAngle = (o.minCrossAngleDeg ?? 30) * D2R;
+  }
+  isClose(a, b) {
+    let ang = this.angTol;
+    if (this.adaptive) {
+      const shortest = Math.max(Math.min(a.len, b.len), 1e-9);
+      ang = Math.min(this.angTol + Math.atan2(this.distTol, shortest), 45 * D2R);
+    }
+    return areClose(a, b, ang, this.distTol, this.gapTol);
+  }
+  addSegments(news) {
+    for (const nw of news) {
+      if (this.cutCrossings) this.cutOldCrossedBy(nw);
+      let fused = false;
+      for (let k = 0; k < this.segments.length; k++) {
+        if (this.isClose(this.segments[k], nw)) { this.segments[k] = mergeSeg(this.segments[k], nw); fused = true; break; }
+      }
+      if (!fused) this.segments.push(nw);
+    }
+    this.consolidate();
+  }
+  consolidate() {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      outer: for (let i = 0; i < this.segments.length; i++) {
+        for (let j = i + 1; j < this.segments.length; j++) {
+          if (this.isClose(this.segments[i], this.segments[j])) {
+            this.segments[i] = mergeSeg(this.segments[i], this.segments[j]);
+            this.segments.splice(j, 1);
+            changed = true;
+            break outer;
+          }
+        }
+      }
+    }
+  }
+  cutOldCrossedBy(nw) {
+    for (let k = 0; k < this.segments.length; k++) {
+      const old = this.segments[k];
+      const hit = intersection(old, nw);
+      if (!hit) continue;
+      if (angleBetween(old, nw) < this.minCrossAngle) continue;
+      const mo = this.crossMargin / Math.max(old.len, 1e-9), mn = this.crossMargin / Math.max(nw.len, 1e-9);
+      if (hit.t > mo && hit.t < 1 - mo && hit.u > mn && hit.u < 1 - mn) this.segments[k] = cutBy(old, nw);
+    }
+  }
+  prune(minWeight = 1, minLength = 0.15) {
+    this.segments = this.segments.filter(s => s.w >= minWeight && s.len >= minLength);
+  }
+}
+
+/* ---------- grille d'occupation (log-odds) ---------- */
+class OccupancyGrid {
+  constructor(xmin, ymin, xmax, ymax, res = 0.05, o = {}) {
+    this.xmin = xmin; this.ymin = ymin; this.res = res;
+    this.nx = Math.max(1, Math.ceil((xmax - xmin) / res));
+    this.ny = Math.max(1, Math.ceil((ymax - ymin) / res));
+    this.lOcc = o.lOcc ?? 0.85; this.lFree = o.lFree ?? -0.4;
+    this.lMin = o.lMin ?? -4; this.lMax = o.lMax ?? 4; this.forget = o.forget ?? 1;
+    this.l = new Float32Array(this.nx * this.ny);
+    this.seen = new Uint8Array(this.nx * this.ny);
+    this.nUpdates = 0;
+  }
+  cell(x, y) { return [Math.floor((x - this.xmin) / this.res), Math.floor((y - this.ymin) / this.res)]; }
+  inside(i, j) { return i >= 0 && i < this.nx && j >= 0 && j < this.ny; }
+  update(scan, pose, maxRange = null) {
+    const [i0, j0] = this.cell(pose.x, pose.y);
+    const pts = worldPoints(scan, pose);
+    const N = this.nx * this.ny;
+    const freeFlag = new Uint8Array(N), hitFlag = new Uint8Array(N);
+    const freeList = [], hitList = [];
+    for (let k = 0; k < scan.ranges.length; k++) {
+      if (maxRange !== null && scan.ranges[k] > maxRange) continue;
+      const [i1, j1] = this.cell(pts[2 * k], pts[2 * k + 1]);
+      const n = Math.max(Math.abs(i1 - i0), Math.abs(j1 - j0));
+      for (let s = 0; s < n; s++) {
+        const i = Math.round(i0 + (i1 - i0) * s / n), j = Math.round(j0 + (j1 - j0) * s / n);
+        if (!this.inside(i, j)) continue;
+        const id = j * this.nx + i;
+        if (!freeFlag[id]) { freeFlag[id] = 1; freeList.push(id); }
+      }
+      if (this.inside(i1, j1)) {
+        const id = j1 * this.nx + i1;
+        if (!hitFlag[id]) { hitFlag[id] = 1; hitList.push(id); }
+      }
+    }
+    if (this.forget < 1) for (let i = 0; i < N; i++) this.l[i] *= this.forget;
+    for (const id of freeList) if (!hitFlag[id]) { this.l[id] = Math.max(this.lMin, Math.min(this.lMax, this.l[id] + this.lFree)); this.seen[id] = 1; }
+    for (const id of hitList) { this.l[id] = Math.max(this.lMin, Math.min(this.lMax, this.l[id] + this.lOcc)); this.seen[id] = 1; }
+    this.nUpdates++;
+  }
+  /* -1 inconnu, 0 libre, 1 occupé */
+  classify(pFree = 0.45, pOcc = 0.60) {
+    const out = new Int8Array(this.l.length).fill(-1);
+    for (let i = 0; i < out.length; i++) {
+      if (!this.seen[i]) continue;
+      const p = 1 / (1 + Math.exp(-this.l[i]));
+      if (p <= pFree) out[i] = 0; else if (p >= pOcc) out[i] = 1;
+    }
+    return out;
+  }
+}
+
+function gridForScans(scans, res, margin = 0.5, o = {}) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const s of scans) {
+    const p = worldPoints(s, s.pose);
+    for (let i = 0; i < p.length; i += 2) {
+      x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); y0 = Math.min(y0, p[i + 1]); y1 = Math.max(y1, p[i + 1]);
+    }
+    x0 = Math.min(x0, s.pose.x); x1 = Math.max(x1, s.pose.x); y0 = Math.min(y0, s.pose.y); y1 = Math.max(y1, s.pose.y);
+  }
+  if (!isFinite(x0)) return null;
+  return new OccupancyGrid(x0 - margin, y0 - margin, x1 + margin, y1 + margin, res, o);
+}
+
+/* ---------- CSV / texte d'export ---------- */
+function scanToCSV(scan) {
+  const lines = ['angle_deg,distance_mm,intensity'];
+  for (let i = 0; i < scan.ranges.length; i++)
+    lines.push(`${(scan.angles[i] * R2D).toFixed(3)},${Math.round(scan.ranges[i] * 1000)},${Math.round(scan.inten[i])}`);
+  return lines.join('\n') + '\n';
+}
+function vectorMapToTxt(segs) {
+  const lines = ['# x1,y1,x2,y2 (m)'];
+  for (const s of segs) lines.push(`${s.x1.toFixed(4)},${s.y1.toFixed(4)},${s.x2.toFixed(4)},${s.y2.toFixed(4)}`);
+  return lines.join('\n') + '\n';
+}
+function gridToCSV(grid) {
+  const c = grid.classify(), rows = [];
+  for (let j = grid.ny - 1; j >= 0; j--) {          // ligne du haut en premier (comme le MapTool)
+    const row = new Array(grid.nx);
+    for (let i = 0; i < grid.nx; i++) row[i] = c[j * grid.nx + i];
+    rows.push(row.join(','));
+  }
+  return rows.join('\n') + '\n';
+}
+
+/* ---------- zip (sans compression) ---------- */
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  return t;
+})();
+function crc32(u8) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < u8.length; i++) c = CRC_TABLE[(c ^ u8[i]) & 255] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function makeZipParts(files) {                 // files : [{name, data: Uint8Array}] -> tableau de Uint8Array
+  const enc = new TextEncoder(), chunks = [], central = [];
+  let offset = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name), crc = crc32(f.data), size = f.data.length;
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true);
+    lh.setUint16(12, 0x21, true); lh.setUint32(14, crc, true); lh.setUint32(18, size, true);
+    lh.setUint32(22, size, true); lh.setUint16(26, name.length, true);
+    chunks.push(new Uint8Array(lh.buffer), name, f.data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true);
+    ch.setUint16(14, 0x21, true); ch.setUint32(16, crc, true); ch.setUint32(20, size, true); ch.setUint32(24, size, true);
+    ch.setUint16(28, name.length, true); ch.setUint32(42, offset, true);
+    central.push(new Uint8Array(ch.buffer), name);
+    offset += 30 + name.length + size;
+  }
+  const csize = central.reduce((s, c) => s + c.length, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true);
+  end.setUint32(12, csize, true); end.setUint32(16, offset, true);
+  return [...chunks, ...central, new Uint8Array(end.buffer)];
+}
+/* CORE-END */
+/* ======================================================================
+   APPLICATION (interface, série, dessin)
+   ====================================================================== */
+const $ = id => document.getElementById(id);
+/* une couleur par scan, sans limite : on avance de 137,5° (angle d'or) sur la roue des teintes,
+   donc deux scans consécutifs ont toujours des couleurs bien différentes */
+const scanColor = i => `hsl(${Math.round((220 + i * 137.508) % 360)} 78% 46%)`;
+const nextColor = () => scanColor(state.colorIdx++);
+
+const state = {
+  scans: [], selected: -1, live: null, tab: 'live',
+  view: { live: { cx: 0, cy: 0, s: 60, auto: true }, map: { cx: 3, cy: 2, s: 80 } },
+  grid: null, vmap: null, gridCanvas: null, queue: 0, counters: {},
+  port: null, reader: null, readLoopPromise: null, connected: false, stop: false,
+  connState: 'idle', portLabel: '', bytes: 0, gotScan: false, monText: '', monDirty: false, timers: [],
+  simTimer: null, scanTimes: [], liveSegs: [], rebuildTimer: null, colorIdx: 0, mapMsg: '', currentStep: undefined,
+};
+const flags = { everConnected: false, mapSeen: false, posed: false, tuned: false, exported: false };
+const cv = $('cv'), ctx = cv.getContext('2d');
+let W = 0, H = 0, dpr = 1;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const darkMq = window.matchMedia('(prefers-color-scheme: dark)');
+
+/* ---------- utilitaires ---------- */
+function setStatus(id, text, cls = '') { const e = $(id); e.textContent = text; e.className = 'status ' + cls; }
+function download(name, blobOrText, type = 'text/plain') {
+  const blob = blobOrText instanceof Blob ? blobOrText : new Blob([blobOrText], { type: type + ';charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+const fmt = (v, d = 2) => (Math.round(v * 10 ** d) / 10 ** d).toString();
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+let toastTimer = null;
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+}
+const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
+
+/* ======================================================================
+   CHRONOLOGIE : état de chaque étape, résumés, ouverture automatique
+   ====================================================================== */
+const STEPS = ['connect', 'capture', 'place', 'maps', 'export'];
+const OPTIONAL = new Set(['maps']);
+const stepEl = k => document.querySelector(`.step[data-step="${k}"]`);
+
+function stepDone() {
+  const n = state.scans.length;
+  return {
+    connect: flags.everConnected || n > 0,
+    capture: n > 0,
+    place: flags.mapSeen && n > 0 && (flags.posed || n === 1),
+    maps: (flags.tuned || flags.exported) && n > 0,
+    export: flags.exported && n > 0,
+  };
+}
+function stepSummaries() {
+  const n = state.scans.length;
+  const conn = state.connState === 'live' ? (state.gotScan ? `${state.portLabel || 'Port série'} · ${$('baud').value} bauds` : 'Connecté, en attente de données')
+    : state.connState === 'sim' ? 'Simulation en cours'
+    : n > 0 ? 'Données importées ou déjà reçues'
+    : 'Branchez l’ESP32 en USB';
+  return {
+    connect: conn,
+    capture: n ? plural(n, 'scan capturé', 'scans capturés') : 'Le robot reste immobile',
+    place: n ? (flags.mapSeen && (flags.posed || n === 1) ? 'Poses réglées sur la carte' : n === 1 ? 'Un seul scan : rien à aligner' : 'Alignez les scans sur la carte') : 'Après la première capture',
+    maps: state.vmap ? `${plural(state.vmap.segments.length, 'segment', 'segments')} · grille ${state.grid.nx}×${state.grid.ny}` : 'Valeurs par défaut',
+    export: flags.exported ? 'lidar_export.zip enregistré' : 'Fichiers pour le TP',
+  };
+}
+function setOpen(k, open) {
+  const li = stepEl(k); if (!li) return;
+  li.classList.toggle('open', open);
+  li.querySelector('.head').setAttribute('aria-expanded', String(open));
+  li.querySelector('.inner').inert = !open;
+}
+function updateTimeline() {
+  const done = stepDone(), sums = stepSummaries();
+  const cur = STEPS.find(k => !done[k] && !OPTIONAL.has(k)) || null;
+  for (const k of STEPS) {
+    const li = stepEl(k);
+    li.dataset.state = done[k] ? 'done' : k === cur ? 'current' : 'todo';
+    li.dataset.line = done[k] ? 'done' : 'todo';
+    li.querySelector('[data-summary]').textContent = sums[k];
+    li.querySelector('[data-chip]').textContent = done[k] ? 'Fait' : k === cur ? 'En cours' : OPTIONAL.has(k) ? 'Facultatif' : 'À faire';
+  }
+  if (cur !== state.currentStep) {
+    const prev = state.currentStep;
+    state.currentStep = cur;
+    if (cur) {
+      setOpen(cur, true);
+      const node = stepEl(cur).querySelector('.node');
+      node.classList.remove('pulse'); void node.offsetWidth; node.classList.add('pulse');
+      node.addEventListener('animationend', () => node.classList.remove('pulse'), { once: true });
+      if (prev !== undefined && (cur === 'capture' || cur === 'place')) stepEl(cur).scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    }
+    if (prev === 'connect' && prev !== cur) setOpen(prev, false);   // les étapes de travail restent ouvertes
+  }
+}
+document.querySelectorAll('.step .head').forEach(b => b.addEventListener('click', () => {
+  const li = b.closest('.step'); setOpen(li.dataset.step, !li.classList.contains('open'));
+}));
+for (const k of STEPS) setOpen(k, stepEl(k).classList.contains('open'));
+
+/* ======================================================================
+   CONNEXION : environnement, erreurs expliquées, diagnostic
+   ====================================================================== */
+const VENDORS = { 0x10C4: 'CP210x (Silicon Labs)', 0x1A86: 'CH340 (WCH)', 0x0403: 'FTDI', 0x303A: 'ESP32 USB natif (Espressif)', 0x2341: 'Arduino', 0x067B: 'Prolific' };
+function portLabelOf(port) {
+  try {
+    const i = port.getInfo();
+    if (i.usbVendorId == null) return 'Port série';
+    return VENDORS[i.usbVendorId] || 'USB ' + i.usbVendorId.toString(16).padStart(4, '0');
+  } catch (_) { return 'Port série'; }
+}
+const isElectron = () => /Electron\//.test(navigator.userAgent);
+const isFramed = () => { try { return window.top !== window.self; } catch (_) { return true; } };
+const hasSerial = () => 'serial' in navigator;
+
+function setConn(kind) {            // idle | live | sim | error
+  state.connState = kind;
+  updateChrome(); updateTimeline();
+}
+function showHelp(on = true) { $('connHelp').hidden = !on; }
+
+function explainSerialError(e, phase) {
+  const name = e && e.name, msg = (e && e.message) || String(e);
+  if (name === 'NotFoundError') {
+    return { text: 'Aucun port choisi. Si la fenêtre de sélection était vide, l’ordinateur ne voit pas l’ESP32 : câble de données, pilote ou autre application. Ouvrez le diagnostic.', kind: 'warn', pill: 'idle' };
+  }
+  if (name === 'SecurityError' || name === 'NotAllowedError') {
+    return { text: 'Accès série refusé par le navigateur (page intégrée ou autorisation bloquée). Ouvrez le fichier directement dans Chrome ou Edge.', kind: 'err', pill: 'error' };
+  }
+  if (phase === 'open' || name === 'NetworkError' || name === 'InvalidStateError') {
+    return { text: 'Le port est occupé ou inaccessible. Fermez le moniteur série d’Arduino, Teleplot et tout autre onglet qui l’utilise, puis rebranchez la carte. (' + msg + ')', kind: 'err', pill: 'error' };
+  }
+  return { text: 'Connexion impossible : ' + msg, kind: 'err', pill: 'error' };
+}
+
+async function connect() {
+  clearTimers();
+  if (!hasSerial()) {
+    setConn('error');
+    setStatus('connStatus', 'Ce navigateur ne gère pas l’accès série. Ouvrez la page dans Chrome ou Edge.', 'err');
+    showHelp(); openDiag(); return;
+  }
+  stopSim(true);
+  showHelp(false);
+  setStatus('connStatus', 'Choisissez le port dans la fenêtre du navigateur…');
+  let port;
+  try {
+    port = await navigator.serial.requestPort();
+  } catch (e) {
+    const x = explainSerialError(e, 'choose');
+    setConn(x.pill); setStatus('connStatus', x.text, x.kind); showHelp(); return;
+  }
+  try {
+    await port.open({ baudRate: parseInt($('baud').value, 10), bufferSize: 65536 });
+  } catch (e) {
+    const x = explainSerialError(e, 'open');
+    setConn(x.pill); setStatus('connStatus', x.text, x.kind); showHelp(); return;
+  }
+  state.port = port; state.stop = false; state.portLabel = portLabelOf(port);
+  state.bytes = 0; state.gotScan = false; state.monText = ''; state.monDirty = true; state.live = null;
+  parser.rows = []; parser.buf = ''; parser.lastAng = null;
+  $('btnConnect').disabled = true; $('btnDisconnect').disabled = false;
+  setStatus('connStatus', 'Connecté. Attente du premier tour complet…', 'ok');
+  setConn('live');
+  toast('Lidar connecté');
+  startWatchdogs();
+  state.readLoopPromise = readLoop();
+}
+function clearTimers() { state.timers.forEach(clearTimeout); state.timers = []; }
+function startWatchdogs() {
+  clearTimers();
+  state.timers.push(setTimeout(() => {
+    if (!state.port || state.bytes > 0) return;
+    setStatus('connStatus', 'Connecté, mais aucun octet reçu après 4 s. Appuyez sur le bouton EN de la carte, ou vérifiez que le sketch envoie les données (printScanCSV).', 'warn');
+    $('monBox').open = true; showHelp();
+  }, 4000));
+  state.timers.push(setTimeout(() => {
+    if (!state.port || state.gotScan || state.bytes === 0) return;
+    setStatus('connStatus', 'Des octets arrivent, mais aucun tour complet n’est reconnu. Vérifiez la vitesse (115200 pour le sketch fourni) et le format : printScanCSV ou printScanTeleplot.', 'warn');
+    $('monBox').open = true;
+  }, 8000));
+}
+async function readLoop() {
+  const decoder = new TextDecoder();
+  let errors = 0, ended = false;
+  while (!ended && !state.stop && state.port && state.port.readable) {
+    state.reader = state.port.readable.getReader();
+    try {
+      for (;;) {
+        const { value, done } = await state.reader.read();
+        if (done) { ended = true; break; }              // flux terminé (arrêt demandé ou câble retiré)
+        errors = 0;
+        const txt = decoder.decode(value, { stream: true });
+        state.bytes += value.length;
+        state.monText = (state.monText + txt).slice(-900); state.monDirty = true;
+        parser.teleFlipY = $('optTeleFlip').checked;
+        parser.feed(txt);
+      }
+    } catch (e) {
+      // erreur non fatale (ex. dépassement de tampon) : on retente quelques fois
+      if (state.stop) break;
+      if (++errors > 20) { setStatus('connStatus', 'Lecture interrompue : ' + e.message, 'err'); state.connState = 'error'; break; }
+    } finally {
+      state.reader.releaseLock(); state.reader = null;
+    }
+  }
+  await closePort();
+}
+async function closePort() {
+  const p = state.port;
+  state.port = null; clearTimers();
+  try { if (p) await p.close(); } catch (_) { /* déjà fermé */ }
+  $('btnConnect').disabled = false; $('btnDisconnect').disabled = true;
+  const wasError = state.connState === 'error';
+  if (!wasError && !state.simTimer) {
+    if (!/err|warn/.test($('connStatus').className)) setStatus('connStatus', 'Déconnecté.');
+    state.connState = 'idle';
+  }
+  updateChrome(); updateTimeline();
+}
+async function disconnect() {
+  state.stop = true;
+  try { if (state.reader) await state.reader.cancel(); } catch (_) { /* ignoré */ }
+  if (state.readLoopPromise) await state.readLoopPromise;
+}
+
+$('connPill').addEventListener('click', () => { setOpen('connect', true); stepEl('connect').scrollIntoView({ block: 'nearest' }); });
+
+/* moniteur : dernières lignes reçues, rafraîchi 3 fois par seconde */
+setInterval(() => {
+  if (!state.monDirty) return;
+  state.monDirty = false;
+  $('monBytes').textContent = state.bytes.toLocaleString('fr-FR');
+  const lines = state.monText.split(/\r?\n/).filter(Boolean).slice(-6).map(l => l.length > 110 ? l.slice(0, 110) + '…' : l);
+  $('mon').textContent = lines.length ? lines.join('\n') : 'Rien reçu pour l’instant.';
+}, 300);
+
+/* ---------- diagnostic ---------- */
+function openDiag() { $('diag').showModal(); runDiag(); }
+async function runDiag() {
+  const ul = $('diagChecks'); ul.innerHTML = '';
+  const add = (kind, title, detail) => {
+    const li = document.createElement('li'); li.className = kind;
+    li.innerHTML = `<span class="ic" aria-hidden="true">${kind === 'ok' ? '✓' : kind === 'bad' ? '✕' : '!'}</span><div><b>${esc(title)}</b><span class="d">${esc(detail)}</span></div>`;
+    ul.appendChild(li);
+  };
+  if (hasSerial()) add('ok', 'Le navigateur gère l’accès série', 'L’API Web Serial est disponible.');
+  else add('bad', 'Le navigateur ne gère pas l’accès série', 'Firefox et Safari ne la proposent pas. Ouvrez cette page dans Chrome ou Edge sur ordinateur.');
+  if (isElectron()) add('warn', 'Fenêtre intégrée à une application', 'Les fenêtres d’application (Electron) n’affichent souvent pas la liste des ports USB. Si la connexion échoue, ouvrez le fichier dans Chrome ou Edge.');
+  if (isFramed()) add('warn', 'Page intégrée dans une autre page', 'Une page dans un cadre n’a pas accès aux ports série. Ouvrez-la directement.');
+  if (window.isSecureContext) add('ok', 'Contexte sécurisé', location.protocol === 'file:' ? 'Fichier local : accepté par Chrome et Edge.' : 'Adresse ' + location.origin + '.');
+  else add('bad', 'Contexte non sécurisé', 'L’accès série exige un fichier local ou http://localhost. Lancez python -m http.server dans le dossier et ouvrez http://localhost:8000/lidar_web.html.');
+  if (hasSerial()) {
+    try {
+      const ports = await navigator.serial.getPorts();
+      if (ports.length) add('ok', plural(ports.length, 'port déjà autorisé', 'ports déjà autorisés'), ports.map(portLabelOf).join(', ') + '. Ils réapparaissent dans la fenêtre de choix.');
+      else add('warn', 'Aucun port encore autorisé', 'C’est normal avant la première connexion. Au clic sur « Connecter le lidar », le navigateur affiche tous les ports que Windows voit. Si cette liste est vide, suivez les pistes ci-dessous.');
+    } catch (e) { add('warn', 'Liste des ports illisible', e.message); }
+  }
+  if (state.port) add('ok', 'Port ouvert', `${state.portLabel}, ${plural(state.bytes, 'octet reçu', 'octets reçus')}.`);
+}
+$('btnDiag').onclick = openDiag;
+$('btnDiagInline').onclick = openDiag;
+$('btnDiagRun').onclick = runDiag;
+$('btnDiagConnect').onclick = () => { $('diag').close(); connect(); };
+
+function updateBrowserWarn() {
+  const w = $('browserWarn');
+  if (!hasSerial()) {
+    w.innerHTML = 'Ce navigateur ne gère pas l’accès série. Ouvrez cette page dans <b>Chrome</b> ou <b>Edge</b> sur ordinateur. La simulation et l’import de fichiers restent disponibles.';
+    w.hidden = false;
+  } else if (isElectron() || isFramed()) {
+    w.innerHTML = 'Cette page semble ouverte dans une fenêtre intégrée à une application, qui peut ne pas lister les ports USB. Si « Connecter » ne propose aucun port, ouvrez le fichier dans <b>Chrome</b> ou <b>Edge</b>.';
+    w.hidden = false;
+  }
+}
+
+/* ---------- réception d'un scan ---------- */
+function ingest(rows) {
+  const off = parseFloat($('optOffset').value) || 0, mirror = $('optMirror').checked;
+  const ang = rows.map(r => (mirror ? -r[0] : r[0]) + off);
+  const scan = makeScan('live', ang, rows.map(r => r[1] / 1000), rows.map(r => r[2]));
+  const now = performance.now();
+  state.scanTimes.push(now);
+  while (state.scanTimes.length > 10) state.scanTimes.shift();
+  if (!state.gotScan) {
+    state.gotScan = true; flags.everConnected = true;
+    if (state.port) { setStatus('connStatus', 'Réception en cours.', 'ok'); showHelp(false); }
+    updateTimeline();
+  }
+  if (state.queue > 0) { captureScan(scan); state.queue--; }
+  if (!$('optFreeze').checked) {
+    state.live = scan;
+    state.liveSegs = $('optLiveSeg').checked ? extractSegments(localPoints(scan)) : [];
+    if (state.tab === 'live') draw();
+  }
+  updateChrome();
+}
+const parser = new LidarParser(ingest, { teleFlipY: true });
+
+/* ---------- simulation (salle 6 x 4 m, pilier, meuble) ---------- */
+const WALLS = [
+  [0, 0, 6, 0], [6, 0, 6, 4], [6, 4, 0, 4], [0, 4, 0, 0],
+  [3, 2, 3.5, 2], [3.5, 2, 3.5, 2.5], [3.5, 2.5, 3, 2.5], [3, 2.5, 3, 2],
+  [1, 0, 1, 0.6], [1, 0.6, 2.2, 0.6], [2.2, 0.6, 2.2, 0],
+];
+function gauss() { return Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random()); }
+function simulateRows(pose, n = 450) {
+  const rows = [];
+  for (let k = 0; k < n; k++) {
+    const a = k * 360 / n, aw = (a + pose.th) * D2R, dx = Math.cos(aw), dy = Math.sin(aw);
+    let best = Infinity;
+    for (const [x1, y1, x2, y2] of WALLS) {
+      const ex = x2 - x1, ey = y2 - y1, den = dx * ey - dy * ex;
+      if (Math.abs(den) < 1e-12) continue;
+      const wx = x1 - pose.x, wy = y1 - pose.y;
+      const t = (wx * ey - wy * ex) / den, u = (wx * dy - wy * dx) / den;
+      if (t > 1e-6 && u >= 0 && u <= 1) best = Math.min(best, t);
+    }
+    if (isFinite(best) && best <= MAX_RANGE && Math.random() > 0.02) rows.push([a, (best + 0.01 * gauss()) * 1000, 120]);
+  }
+  return rows;
+}
+function startSim() {
+  if (state.port) return;
+  flags.everConnected = true; state.gotScan = true;
+  state.simTimer = setInterval(() => {
+    ingest(simulateRows(capturePose()));
+  }, 250);
+  $('btnSim').textContent = 'Arrêter la simulation';
+  setStatus('connStatus', 'Simulation : le lidar virtuel se place à la pose saisie à l’étape 2.', 'ok');
+  showHelp(false);
+  setConn('sim');
+}
+function stopSim(silent) {
+  if (!state.simTimer) return;
+  clearInterval(state.simTimer); state.simTimer = null;
+  $('btnSim').textContent = 'Simulation';
+  if (!silent) { setStatus('connStatus', 'Simulation arrêtée.'); setConn('idle'); }
+}
+
+/* ---------- position du robot : depuis l'origine ou depuis le scan précédent ---------- */
+const poseMode = () => document.querySelector('input[name=poseMode]:checked').value;
+const wrap180 = a => ((a + 180) % 360 + 360) % 360 - 180;
+function capturePose() {
+  const d = { x: +$('capX').value || 0, y: +$('capY').value || 0, th: +$('capT').value || 0 };
+  const last = state.scans[state.scans.length - 1];
+  if (poseMode() !== 'rel' || !last) return d;
+  const c = Math.cos(last.pose.th * D2R), s = Math.sin(last.pose.th * D2R);
+  return { x: last.pose.x + c * d.x - s * d.y, y: last.pose.y + s * d.x + c * d.y, th: wrap180(last.pose.th + d.th) };
+}
+function updatePoseUi() {
+  const rel = poseMode() === 'rel';
+  const lab = (id, a, r) => { document.querySelector(`label[for=${id}]`).textContent = rel ? r : a; };
+  lab('capX', 'x (m)', 'avant (m)'); lab('capY', 'y (m)', 'gauche (m)'); lab('capT', 'θ (°)', 'rotation (°)');
+  const last = state.scans[state.scans.length - 1], p = capturePose();
+  $('poseHint').textContent = !rel ? '' : !last ? 'Premier scan : il définit l’origine (0, 0, 0 conseillé).'
+    : `Position résultante dans le repère de l’origine : x = ${fmt(p.x)} m, y = ${fmt(p.y)} m, θ = ${fmt(p.th, 1)}°`;
+}
+['capX', 'capY', 'capT'].forEach(id => $(id).addEventListener('input', updatePoseUi));
+document.querySelectorAll('input[name=poseMode]').forEach(r => r.addEventListener('change', () => {
+  if (poseMode() === 'rel') ['capX', 'capY', 'capT'].forEach(id => { $(id).value = 0; });   // on part d'un déplacement nul
+  updatePoseUi();
+}));
+
+/* ---------- scans capturés ---------- */
+function captureScan(src) {
+  const prefix = ($('prefix').value || 'scan').replace(/[^\w\-]+/g, '_');
+  const k = state.counters[prefix] = (state.counters[prefix] ?? -1) + 1;
+  const scan = { ...src, name: `${prefix}_${String(k).padStart(3, '0')}` };
+  scan.pose = { ...(state.batchPose || capturePose()) };
+  scan.color = nextColor();
+  scan.visible = true;
+  state.scans.push(scan);
+  state.selected = state.scans.length - 1;
+  flags.exported = false;
+  renderScanList();
+  scheduleRebuild();
+  setStatus('capStatus', `Scan « ${scan.name} » capturé (${scan.ranges.length} points).`, 'ok');
+  toast(`Scan ${scan.name} capturé`);
+  updateTimeline();
+}
+function captureNow() {
+  if (!state.live) { setStatus('capStatus', 'Aucun scan à capturer : le lidar n’envoie pas encore de données.', 'err'); return; }
+  const n = Math.max(1, parseInt($('nCap').value, 10) || 1);
+  state.batchPose = capturePose();               // même position pour tous les tours de ce lot
+  captureScan(state.live);                       // le scan affiché
+  state.queue = n - 1;                           // puis les suivants
+  if (poseMode() === 'rel') { ['capX', 'capY', 'capT'].forEach(id => { $(id).value = 0; }); updatePoseUi(); }
+}
+function renderScanList() {
+  updatePoseUi();
+  const box = $('scanList');
+  box.innerHTML = '';
+  if (!state.scans.length) {
+    box.innerHTML = '<div class="empty-list">Aucun scan pour l’instant.</div>';
+    return;
+  }
+  state.scans.forEach((s, i) => {
+    const el = document.createElement('div');
+    el.className = 'scan' + (i === state.selected ? ' sel' : '');
+    el.style.setProperty('--c', s.color);
+    el.innerHTML = `<div class="top">
+      <input type="checkbox" ${s.visible ? 'checked' : ''} aria-label="Afficher ${esc(s.name)}">
+      <span class="name">${esc(s.name)}</span><span class="pts">${s.ranges.length} pts</span>
+      <button class="x" type="button" aria-label="Supprimer ${esc(s.name)}">✕</button></div>
+      <div class="pose">
+        <input type="number" step="0.01" data-k="x" aria-label="x (m)" value="${fmt(s.pose.x)}">
+        <input type="number" step="0.01" data-k="y" aria-label="y (m)" value="${fmt(s.pose.y)}">
+        <input type="number" step="1" data-k="th" aria-label="theta (°)" value="${fmt(s.pose.th, 1)}"></div>`;
+    el.addEventListener('click', () => { state.selected = i; renderScanList(); draw(); });
+    el.querySelector('input[type=checkbox]').addEventListener('click', e => {
+      e.stopPropagation(); s.visible = e.target.checked; scheduleRebuild(); draw();
+    });
+    el.querySelector('button.x').addEventListener('click', e => {
+      e.stopPropagation(); state.scans.splice(i, 1);
+      state.selected = Math.min(state.selected, state.scans.length - 1);
+      renderScanList(); scheduleRebuild(); draw(); updateChrome(); updateTimeline();
+    });
+    el.querySelectorAll('.pose input').forEach(inp => {
+      inp.addEventListener('click', e => e.stopPropagation());
+      inp.addEventListener('input', () => { s.pose[inp.dataset.k] = parseFloat(inp.value) || 0; touchPose(); scheduleRebuild(); draw(); });
+    });
+    box.appendChild(el);
+  });
+}
+function touchPose() { if (!flags.posed) { flags.posed = true; updateTimeline(); } }
+function refreshPoseInputs() {
+  const els = $('scanList').children;
+  state.scans.forEach((s, i) => {
+    const inputs = els[i]?.querySelectorAll('.pose input');
+    if (!inputs) return;
+    inputs[0].value = fmt(s.pose.x); inputs[1].value = fmt(s.pose.y); inputs[2].value = fmt(s.pose.th, 1);
+  });
+}
+
+/* ---------- cartes ---------- */
+function scheduleRebuild() {
+  if (!$('autoBuild').checked) return;
+  clearTimeout(state.rebuildTimer);
+  state.rebuildTimer = setTimeout(rebuild, 120);
+}
+function rebuild() {
+  const vis = state.scans.filter(s => s.visible);
+  if (!vis.length) {
+    state.grid = null; state.vmap = null; state.gridCanvas = null; state.mapMsg = '';
+    setStatus('mapStatus', ''); draw(); updateChrome(); updateTimeline(); return;
+  }
+  const t0 = performance.now();
+  const grid = gridForScans(vis, parseFloat($('gridRes').value), 0.5, { forget: parseFloat($('gridForget').value) || 1 });
+  for (const s of vis) grid.update(s, s.pose);
+  const vm = new VectorMap({ angTolDeg: +$('angTol').value, distTol: +$('distTol').value, gapTol: +$('gapTol').value });
+  for (const s of vis) {
+    if (!s._seg) s._seg = extractSegments(localPoints(s));
+    vm.addSegments(s._seg.map(sg => segToWorld(sg, s.pose)));
+  }
+  vm.prune(+$('minWeight').value || 1);
+  state.grid = grid; state.vmap = vm;
+  renderGridImage();
+  const msg = `${vis.length} scan(s) · grille ${grid.nx}×${grid.ny} · ${vm.segments.length} segments · ${Math.round(performance.now() - t0)} ms`;
+  setStatus('mapStatus', msg, 'ok');
+  state.mapMsg = msg;
+  draw(); updateChrome(); updateTimeline();
+}
+function renderGridImage() {
+  const g = state.grid;
+  if (!g) { state.gridCanvas = null; return; }
+  const c = document.createElement('canvas'); c.width = g.nx; c.height = g.ny;
+  const x = c.getContext('2d'), img = x.createImageData(g.nx, g.ny), cls = g.classify();
+  const dark = darkMq.matches;
+  const occ = dark ? [226, 232, 240, 70] : [26, 32, 39, 60];
+  const free = dark ? [148, 163, 184, 38] : [100, 116, 139, 30];
+  for (let j = 0; j < g.ny; j++) for (let i = 0; i < g.nx; i++) {
+    const v = cls[j * g.nx + i], px = ((g.ny - 1 - j) * g.nx + i) * 4;     // ligne 0 de l'image = y max
+    const col = v === 1 ? occ : v === 0 ? free : null;
+    if (!col) continue;
+    img.data[px] = col[0]; img.data[px + 1] = col[1]; img.data[px + 2] = col[2]; img.data[px + 3] = col[3];
+  }
+  x.putImageData(img, 0, 0);
+  state.gridCanvas = c;
+}
+darkMq.addEventListener?.('change', () => { renderGridImage(); draw(); });
+
+/* ---------- dessin ---------- */
+function resize() {
+  const r = cv.parentElement.getBoundingClientRect();
+  dpr = window.devicePixelRatio || 1;
+  W = Math.max(1, r.width); H = Math.max(1, r.height);
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  draw();
+}
+new ResizeObserver(resize).observe(cv.parentElement);
+
+const V = () => state.view[state.tab];
+const w2s = (x, y) => [W / 2 + (x - V().cx) * V().s, H / 2 - (y - V().cy) * V().s];
+const s2w = (sx, sy) => [V().cx + (sx - W / 2) / V().s, V().cy - (sy - H / 2) / V().s];
+
+function drawBackground() {
+  ctx.fillStyle = css('--canvas'); ctx.fillRect(0, 0, W, H);
+}
+function niceStep(pxPerM) {
+  for (const st of [0.1, 0.2, 0.5, 1, 2, 5, 10]) if (st * pxPerM >= 50) return st;
+  return 10;
+}
+function drawGridLines() {
+  const v = V(), step = niceStep(v.s);
+  const [x0, y1] = s2w(0, 0), [x1, y0] = s2w(W, H);
+  ctx.lineWidth = 1; ctx.strokeStyle = css('--grid'); ctx.fillStyle = css('--muted'); ctx.font = '11px ' + css('--font');
+  ctx.beginPath();
+  for (let x = Math.ceil(x0 / step) * step; x <= x1; x += step) { const [sx] = w2s(x, 0); ctx.moveTo(sx + .5, 0); ctx.lineTo(sx + .5, H); }
+  for (let y = Math.ceil(y0 / step) * step; y <= y1; y += step) { const [, sy] = w2s(0, y); ctx.moveTo(0, sy + .5); ctx.lineTo(W, sy + .5); }
+  ctx.stroke();
+  ctx.strokeStyle = css('--axis');
+  const [ox, oy] = w2s(0, 0);
+  ctx.beginPath(); ctx.moveTo(ox + .5, 0); ctx.lineTo(ox + .5, H); ctx.moveTo(0, oy + .5); ctx.lineTo(W, oy + .5); ctx.stroke();
+  for (let x = Math.ceil(x0 / step) * step; x <= x1; x += step) { const [sx] = w2s(x, 0); ctx.fillText(fmt(x, 1) + ' m', sx + 3, Math.min(H - 4, Math.max(12, oy - 4))); }
+}
+function drawRings() {
+  const v = V(), step = niceStep(v.s), [ox, oy] = w2s(0, 0);
+  ctx.lineWidth = 1; ctx.strokeStyle = css('--grid'); ctx.fillStyle = css('--muted'); ctx.font = '11px ' + css('--font');
+  const maxR = Math.hypot(W, H) / v.s;
+  for (let r = step; r <= maxR; r += step) {
+    ctx.beginPath(); ctx.arc(ox, oy, r * v.s, 0, 2 * Math.PI); ctx.stroke();
+    ctx.fillText(fmt(r, 1) + ' m', ox + r * v.s * 0.707 + 3, oy - r * v.s * 0.707 - 3);
+  }
+  ctx.strokeStyle = css('--axis');
+  ctx.beginPath(); ctx.moveTo(ox, 0); ctx.lineTo(ox, H); ctx.moveTo(0, oy); ctx.lineTo(W, oy); ctx.stroke();
+}
+function drawRobot(x, y, thDeg, color, size = 9) {
+  const [sx, sy] = w2s(x, y), a = -thDeg * D2R;
+  ctx.save(); ctx.translate(sx, sy); ctx.rotate(a);
+  ctx.fillStyle = color; ctx.strokeStyle = css('--canvas'); ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(size * 1.5, 0); ctx.lineTo(-size, size * .8); ctx.lineTo(-size * .5, 0); ctx.lineTo(-size, -size * .8); ctx.closePath();
+  ctx.fill(); ctx.stroke(); ctx.restore();
+}
+function drawPoints(pts, color, alphas = null, r = 1.6) {
+  ctx.fillStyle = color;
+  for (let i = 0; i < pts.length; i += 2) {
+    const [sx, sy] = w2s(pts[i], pts[i + 1]);
+    if (sx < -4 || sy < -4 || sx > W + 4 || sy > H + 4) continue;
+    ctx.globalAlpha = alphas ? alphas[i / 2] : 1;
+    ctx.fillRect(sx - r, sy - r, 2 * r, 2 * r);
+  }
+  ctx.globalAlpha = 1;
+}
+function drawSegs(segs, color, lw = 2.5) {
+  ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.lineCap = 'round';
+  for (const s of segs) {
+    const [a, b] = w2s(s.x1, s.y1), [c, d] = w2s(s.x2, s.y2);
+    ctx.beginPath(); ctx.moveTo(a, b); ctx.lineTo(c, d); ctx.stroke();
+  }
+}
+
+function drawLive() {
+  const v = state.view.live, scan = state.live;
+  if (v.auto) {
+    const maxR = scan ? Math.max(2, Math.min(12, Math.ceil(Math.max(...scan.ranges)))) : 4;
+    v.cx = 0; v.cy = 0; v.s = Math.min(W, H) / 2 / (maxR * 1.08);
+  }
+  drawRings();
+  if (scan) {
+    const pts = localPoints(scan);
+    const alphas = $('optIntensity').checked ? Array.from(scan.inten, i => 0.35 + 0.65 * Math.min(1, i / 255)) : null;
+    drawPoints(pts, css('--live'), alphas, 1.8);
+    if ($('optLiveSeg').checked) drawSegs(state.liveSegs, css('--seg'), 2.5);
+  }
+  drawRobot(0, 0, 0, css('--ink'), 8);
+}
+
+function drawMap() {
+  drawGridLines();
+  const g = state.grid;
+  if (g && state.gridCanvas && $('layGrid').checked) {
+    const [sx, sy] = w2s(g.xmin, g.ymin + g.ny * g.res);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(state.gridCanvas, sx, sy, g.nx * g.res * V().s, g.ny * g.res * V().s);
+  }
+  if ($('laySeg').checked && state.vmap) drawSegs(state.vmap.segments, css('--ink'), 1.5);
+  if ($('layPts').checked) {                      // les points par-dessus : une couleur par scan, le scan choisi au-dessus
+    state.scans.forEach((s, i) => { if (s.visible && i !== state.selected) drawPoints(worldPoints(s, s.pose), s.color, null, 2.0); });
+    const sel = state.scans[state.selected];
+    if (sel && sel.visible) drawPoints(worldPoints(sel, sel.pose), sel.color, null, 2.3);
+  }
+  ctx.font = '600 12px ' + css('--font');
+  state.scans.forEach((s, i) => {
+    if (!s.visible) return;
+    drawRobot(s.pose.x, s.pose.y, s.pose.th, s.color, i === state.selected ? 11 : 8);
+    const [sx, sy] = w2s(s.pose.x, s.pose.y);
+    ctx.fillStyle = s.color; ctx.fillText(s.name, sx + 12, sy - 10);
+  });
+}
+
+function draw() {
+  drawBackground();
+  if (state.tab === 'live') drawLive(); else drawMap();
+}
+
+/* ---------- pastille de connexion, HUD, écran vide ---------- */
+const SWEEP_SVG = `<svg viewBox="0 0 96 96" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+  <circle cx="48" cy="48" r="40"/><circle cx="48" cy="48" r="26" opacity=".6"/><circle cx="48" cy="48" r="12" opacity=".4"/>
+  <g class="sweep"><path d="M48 48 L48 8 A40 40 0 0 1 76 19.6 Z" fill="var(--beacon)" stroke="none" opacity=".55"/><path d="M48 48 L48 8"/></g>
+  <circle cx="48" cy="48" r="3" fill="currentColor" stroke="none"/></svg>`;
+let emptyKey = '';
+function updateEmpty() {
+  const box = $('empty');
+  let key = '', html = '';
+  if (state.tab === 'live' && !state.live) {
+    if (state.port) {
+      key = 'wait';
+      html = `<h2>En attente du premier tour</h2>
+        <p>Les points apparaissent dès qu’un tour complet est reçu. Rien après quelques secondes ? Appuyez sur le bouton EN de la carte.</p>
+        <div class="row"><button class="btn" type="button" data-act="mon">Voir les données reçues</button></div>`;
+    } else {
+      key = 'none';
+      html = `<h2>Aucune donnée du lidar</h2>
+        <p>Branchez l’ESP32 en USB puis connectez-le. Sans robot, la simulation montre le fonctionnement.</p>
+        <div class="row"><button class="btn primary" type="button" data-act="connect">Connecter le lidar</button>
+        <button class="btn" type="button" data-act="sim">Lancer la simulation</button></div>`;
+    }
+  } else if (state.tab === 'map' && !state.scans.length) {
+    key = 'nomap';
+    html = `<h2>Aucun scan capturé</h2>
+      <p>Capturez un scan depuis l’onglet Direct, ou importez des fichiers déjà enregistrés.</p>
+      <div class="row"><button class="btn primary" type="button" data-act="live">Aller à Direct</button>
+      <button class="btn" type="button" data-act="import">Importer des fichiers</button></div>`;
+  }
+  if (key === emptyKey) return;
+  emptyKey = key;
+  box.hidden = !key;
+  box.innerHTML = key ? `<div class="emptybox">${SWEEP_SVG}${html}</div>` : '';
+}
+$('empty').addEventListener('click', e => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const a = b.dataset.act;
+  if (a === 'connect') connect();
+  else if (a === 'sim') startSim();
+  else if (a === 'live') setTab('live');
+  else if (a === 'import') $('fileImport').click();
+  else if (a === 'mon') { setOpen('connect', true); $('monBox').open = true; stepEl('connect').scrollIntoView({ block: 'nearest' }); }
+});
+
+function updateChrome() {
+  const t = state.scanTimes;
+  const hz = t.length > 1 ? (t.length - 1) / ((t[t.length - 1] - t[0]) / 1000) : 0;
+  // pastille
+  const pill = $('connPill'), kind = state.connState;
+  pill.dataset.state = kind;
+  $('connPillText').textContent = kind === 'live'
+    ? (state.live ? `Lidar connecté · ${hz.toFixed(1)} scans/s` : 'Lidar connecté · en attente de données')
+    : kind === 'sim' ? `Simulation · ${hz.toFixed(1)} scans/s`
+    : kind === 'error' ? 'Connexion échouée' : 'Non connecté';
+  // HUD
+  const hud = $('hud');
+  if (state.tab === 'live' && state.live) {
+    hud.hidden = false;
+    hud.innerHTML = `<span><b>${state.live.ranges.length}</b>points</span><span><b>${hz.toFixed(1)}</b>scans/s</span><span><b>${fmt(Math.max(...state.live.ranges), 2)}</b>m max</span>`;
+  } else if (state.tab === 'map' && state.scans.length) {
+    const vis = state.scans.filter(s => s.visible).length;
+    hud.hidden = false;
+    hud.innerHTML = `<span><b>${vis}</b>${vis > 1 ? 'scans' : 'scan'}</span>` +
+      (state.vmap ? `<span><b>${state.vmap.segments.length}</b>segments</span><span><b>${state.grid.nx}×${state.grid.ny}</b>cellules</span>` : '');
+  } else hud.hidden = true;
+  updateEmpty();
+}
+
+/* ---------- vue : ajuster, zoom, déplacement ---------- */
+function fitView() {
+  if (state.tab === 'live') { state.view.live.auto = true; draw(); return; }
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const s of state.scans) {
+    if (!s.visible) continue;
+    const p = worldPoints(s, s.pose);
+    for (let i = 0; i < p.length; i += 2) { x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); y0 = Math.min(y0, p[i + 1]); y1 = Math.max(y1, p[i + 1]); }
+  }
+  if (!isFinite(x0)) { Object.assign(state.view.map, { cx: 3, cy: 2, s: 80 }); draw(); return; }
+  const v = state.view.map;
+  v.cx = (x0 + x1) / 2; v.cy = (y0 + y1) / 2;
+  v.s = Math.min(W / Math.max(1, (x1 - x0) * 1.15), H / Math.max(1, (y1 - y0) * 1.15));
+  draw();
+}
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  const v = V(), [wx, wy] = s2w(e.offsetX, e.offsetY);
+  v.s = Math.min(2000, Math.max(5, v.s * Math.exp(-e.deltaY * 0.0012)));
+  v.cx = wx - (e.offsetX - W / 2) / v.s; v.cy = wy + (e.offsetY - H / 2) / v.s;
+  if (state.tab === 'live') v.auto = false;
+  draw();
+}, { passive: false });
+
+let drag = null;
+cv.addEventListener('pointerdown', e => {
+  cv.setPointerCapture(e.pointerId); cv.focus();
+  const sel = state.scans[state.selected];
+  const moveScan = state.tab === 'map' && document.querySelector('input[name=mode]:checked').value === 'scan' && sel;
+  drag = { x: e.offsetX, y: e.offsetY, lx: e.offsetX, ly: e.offsetY, moveScan, rot: e.shiftKey, start: sel ? { ...sel.pose } : null };
+});
+cv.addEventListener('pointermove', e => {
+  const [wx, wy] = s2w(e.offsetX, e.offsetY);
+  $('footRight').textContent = `x = ${fmt(wx, 2)} m · y = ${fmt(wy, 2)} m`;
+  if (!drag) return;
+  const v = V(), sel = state.scans[state.selected];
+  if (drag.moveScan && sel) {
+    if (drag.rot) {
+      const [ox, oy] = w2s(drag.start.x, drag.start.y);
+      const a0 = Math.atan2(-(drag.y - oy), drag.x - ox), a1 = Math.atan2(-(e.offsetY - oy), e.offsetX - ox);
+      let th = drag.start.th + (a1 - a0) * R2D;
+      sel.pose.th = ((th + 180) % 360 + 360) % 360 - 180;
+    } else {
+      sel.pose.x = drag.start.x + (e.offsetX - drag.x) / v.s;
+      sel.pose.y = drag.start.y - (e.offsetY - drag.y) / v.s;
+    }
+    refreshPoseInputs(); touchPose(); scheduleRebuild();
+  } else {
+    v.cx -= (e.offsetX - drag.lx) / v.s; v.cy += (e.offsetY - drag.ly) / v.s;
+    if (state.tab === 'live') v.auto = false;
+  }
+  drag.lx = e.offsetX; drag.ly = e.offsetY;
+  draw();
+});
+const endDrag = () => { drag = null; };
+cv.addEventListener('pointerup', endDrag); cv.addEventListener('pointercancel', endDrag);
+
+window.addEventListener('keydown', e => {
+  if ($('diag').open) return;
+  const tag = (document.activeElement?.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+  if (e.code === 'Space') {
+    if (tag === 'button' || tag === 'summary') return;      // le bouton gère déjà l'espace lui-même
+    e.preventDefault(); captureNow(); return;
+  }
+  if (state.tab !== 'map') return;
+  const sel = state.scans[state.selected];
+  if (!sel) return;
+  const step = e.shiftKey ? 0.01 : 0.05, rot = e.shiftKey ? 0.2 : 1;
+  const k = e.key.replace('<', ',').replace('>', '.');
+  const moves = { ArrowLeft: [-step, 0, 0], ArrowRight: [step, 0, 0], ArrowUp: [0, step, 0], ArrowDown: [0, -step, 0], ',': [0, 0, rot], '.': [0, 0, -rot] };
+  if (!moves[k]) return;
+  e.preventDefault();
+  sel.pose.x += moves[k][0]; sel.pose.y += moves[k][1];
+  sel.pose.th = ((sel.pose.th + moves[k][2] + 180) % 360 + 360) % 360 - 180;
+  refreshPoseInputs(); touchPose(); scheduleRebuild(); draw();
+});
+
+/* ---------- onglets ---------- */
+function setTab(t) {
+  state.tab = t;
+  $('tabLive').setAttribute('aria-selected', t === 'live');
+  $('tabMap').setAttribute('aria-selected', t === 'map');
+  $('liveOpts').style.display = t === 'live' ? 'flex' : 'none';
+  $('mapOpts').style.display = t === 'map' ? 'flex' : 'none';
+  if (t === 'map') {
+    if (state.scans.length) flags.mapSeen = true;
+    if ($('autoBuild').checked) rebuild();
+    fitView();
+  } else draw();
+  updateChrome(); updateTimeline();
+}
+$('tabLive').onclick = () => setTab('live');
+$('tabMap').onclick = () => setTab('map');
+$('btnGoMap').onclick = () => setTab('map');
+
+/* ---------- import / export ---------- */
+async function importFiles(files) {
+  let added = 0;
+  for (const f of files) {
+    const text = await f.text();
+    const stem = f.name.replace(/\.[^.]+$/, '');
+    if (f.name.toLowerCase().endsWith('.json')) {
+      let data;
+      try { data = JSON.parse(text); } catch (e) { toast(`${f.name} : JSON invalide`); continue; }
+      if (Array.isArray(data.scans)) {                                   // projet complet
+        for (const sc of data.scans) {
+          const scan = makeScan(sc.name, sc.angles_deg, sc.distances_mm.map(d => d / 1000), sc.intensity);
+          scan.pose = { x: sc.pose[0], y: sc.pose[1], th: sc.pose[2] };
+          scan.color = nextColor(); scan.visible = true;
+          state.scans.push(scan); added++;
+        }
+      } else {                                                           // poses.json {nom: [x, y, th]}
+        for (const s of state.scans) if (data[s.name]) { s.pose = { x: data[s.name][0], y: data[s.name][1], th: data[s.name][2] }; flags.posed = true; }
+      }
+    } else {
+      for (const scan of parseScanText(text, stem)) {
+        scan.color = nextColor(); scan.visible = true;
+        state.scans.push(scan); added++;
+      }
+    }
+  }
+  state.selected = state.scans.length - 1;
+  if (added) flags.exported = false;
+  renderScanList(); scheduleRebuild(); draw(); updateChrome(); updateTimeline();
+  toast(added ? `${plural(added, 'scan importé', 'scans importés')}` : 'Aucun scan reconnu dans ces fichiers');
+}
+
+function posesObject() {
+  const o = {};
+  for (const s of state.scans) o[s.name] = [+s.pose.x.toFixed(4), +s.pose.y.toFixed(4), +s.pose.th.toFixed(4)];
+  return o;
+}
+function projectObject() {
+  return {
+    version: 1,
+    scans: state.scans.map(s => ({
+      name: s.name, pose: [s.pose.x, s.pose.y, s.pose.th],
+      angles_deg: Array.from(s.angles, a => +(a * R2D).toFixed(3)),
+      distances_mm: Array.from(s.ranges, r => Math.round(r * 1000)),
+      intensity: Array.from(s.inten, i => Math.round(i)),
+    })),
+  };
+}
+function ensureMaps() { rebuild(); }          // toujours à jour au moment de l'export
+function canvasPngBlob() {
+  const prev = state.tab;
+  if (prev !== 'map') { state.tab = 'map'; fitView(); }
+  return new Promise(res => cv.toBlob(b => { if (prev !== 'map') { state.tab = prev; draw(); } res(b); }, 'image/png'));
+}
+function markExported(msg) { flags.exported = true; toast(msg); updateTimeline(); }
+
+async function exportZip() {
+  if (!state.scans.length) { toast('Rien à exporter : capturez d’abord un scan'); return; }
+  ensureMaps();
+  const enc = new TextEncoder(), files = [];
+  const add = (name, text) => files.push({ name, data: enc.encode(text) });
+  for (const s of state.scans) add(`scans/${s.name}.csv`, scanToCSV(s));
+  add('poses.json', JSON.stringify(posesObject(), null, 2) + '\n');
+  add('projet.json', JSON.stringify(projectObject()) + '\n');
+  if (state.vmap) add('carte_vectorielle.txt', vectorMapToTxt(state.vmap.segments));
+  if (state.grid) add('grille.csv', gridToCSV(state.grid));
+  const png = await canvasPngBlob();
+  if (png) files.push({ name: 'carte.png', data: new Uint8Array(await png.arrayBuffer()) });
+  download('lidar_export.zip', new Blob(makeZipParts(files), { type: 'application/zip' }));
+  markExported(`Export : ${plural(state.scans.length, 'scan', 'scans')} dans lidar_export.zip`);
+}
+
+/* ---------- branchements ---------- */
+$('btnConnect').onclick = connect;
+$('btnDisconnect').onclick = disconnect;
+$('btnSim').onclick = () => (state.simTimer ? stopSim() : startSim());
+$('btnCapture').onclick = captureNow;
+$('btnFit').onclick = fitView;
+$('btnBuild').onclick = rebuild;
+$('btnImport').onclick = () => $('fileImport').click();
+$('fileImport').onchange = e => { importFiles([...e.target.files]); e.target.value = ''; };
+$('btnClear').onclick = () => {
+  if (state.scans.length && !confirm('Effacer tous les scans capturés ?')) return;
+  state.scans = []; state.selected = -1; state.counters = {}; state.colorIdx = 0;
+  flags.mapSeen = false; flags.posed = false; flags.tuned = false; flags.exported = false;
+  setStatus('capStatus', '');
+  renderScanList(); rebuild();
+};
+$('btnZip').onclick = exportZip;
+$('btnExpScan').onclick = () => {
+  const s = state.tab === 'map' && state.scans[state.selected] ? state.scans[state.selected] : state.live;
+  if (!s) { toast('Aucun scan à exporter'); return; }
+  download((s.name === 'live' ? 'scan_live' : s.name) + '.csv', scanToCSV(s), 'text/csv');
+  markExported('Scan exporté');
+};
+$('btnExpVec').onclick = () => { ensureMaps(); if (state.vmap) { download('carte_vectorielle.txt', vectorMapToTxt(state.vmap.segments)); markExported('Carte vectorielle exportée'); } else toast('Aucun scan à exporter'); };
+$('btnExpGrid').onclick = () => { ensureMaps(); if (state.grid) { download('grille.csv', gridToCSV(state.grid), 'text/csv'); markExported('Grille exportée'); } else toast('Aucun scan à exporter'); };
+$('btnExpPng').onclick = async () => { const b = await canvasPngBlob(); if (b) { download('carte.png', b); markExported('Image exportée'); } };
+['optLiveSeg', 'optIntensity'].forEach(id => $(id).addEventListener('change', () => {
+  if (id === 'optLiveSeg' && state.live) state.liveSegs = $(id).checked ? extractSegments(localPoints(state.live)) : [];
+  draw();
+}));
+['layPts', 'layGrid', 'laySeg'].forEach(id => $(id).addEventListener('change', draw));
+['gridRes', 'gridForget', 'angTol', 'distTol', 'gapTol', 'minWeight'].forEach(id => $(id).addEventListener('change', () => { flags.tuned = true; rebuild(); }));
+document.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('change', () => { cv.style.cursor = r.value === 'scan' ? 'move' : 'grab'; }));
+$('autoBuild').addEventListener('change', () => { if ($('autoBuild').checked) rebuild(); });
+
+if (hasSerial()) {
+  navigator.serial.addEventListener?.('disconnect', () => {
+    if (!state.port) return;
+    setStatus('connStatus', 'Lidar débranché.', 'err'); state.connState = 'error'; closePort();
+  });
+}
+updateBrowserWarn();
+cv.style.cursor = 'grab';
+renderScanList();
+updateChrome();
+updateTimeline();
+resize();
+</script>
+</body>
+</html>
