@@ -108,8 +108,18 @@ Boutons (à tenir appuyés) ou clavier (case **Clavier**, cochée par défaut) :
 Commandes envoyées par le même WebSocket que le lidar : `D,vx,vy,w,v` (vx > 0 avance, vy > 0 décale à gauche, w > 0 tourne à gauche ; −1, 0 ou 1 ; v = vitesse en %, curseur **Vitesse**, 20 à 100),
 répétée toutes les 100 ms tant qu'une touche est tenue, et `S` pour arrêter. Un arrêt est aussi envoyé au relâchement, à la perte de focus de la fenêtre,
 au changement d'onglet et à la déconnexion. Le sketch doit en plus s'arrêter seul si les ordres cessent (300 ms dans le sketch fourni).
-Le curseur **Vitesse** (v18) règle la vitesse des 4 roues : si les petits moteurs ne démarrent pas, il faut l'augmenter. Le sketch fourni commande les 4 roues
-directement (carte moteur en I2C, adresse 0x30) au lieu d'utiliser la bibliothèque `MecanumCar_v2`, écrite pour une Raspberry Pi Pico et limitée à une vitesse fixe de 80/255.
+Le curseur **Vitesse** (v18) règle la vitesse des 4 roues : si les petits moteurs ne démarrent pas, il faut l'augmenter.
+
+#### Sketch ESP32 : `arduino/ESP32_Robot_WiFi_Pilotage/`
+
+Lidar en direct par WebSocket (port 81), réception des ordres `D,vx,vy,w,v` / `S`, arrêt automatique 300 ms sans ordre.
+Les moteurs reçoivent le **PWM directement sur les 8 broches** (M1A = D5, M1B = D18, M2A = D19, M2B = D21, M3A = D2, M3B = D4, M4A = D16, M4B = D17 ;
+M1 avant droit, M2 avant gauche, M3 arrière gauche, M4 arrière droit). Les montages I2C (bibliothèque `MecanumCar_v2`, ou I2C plus lent) restent
+sélectionnables pour comparer. Le sketch n'a pas encore été validé sur le robot : seul le montage GPIO direct est à confirmer.
+
+**Page de test PWM** : connecté au réseau `Robot-LiDAR`, ouvrir `http://192.168.4.1/` : choix du mode, 8 curseurs (M1A à M4B), avancer / reculer, un moteur à la fois,
+case « inverser » par moteur (à reporter dans `sensMoteur`). Tout s'arrête seul 3 s après la perte de la liaison.
+Bibliothèques : LD06 (archive du TP), WebSockets (Markus Sattler), MecanumCar_v2 (module).
 
 ### Jour 2 : localisation (onglet Localisation de `lidar_web.html`)
 
