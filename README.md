@@ -69,7 +69,7 @@ terminées passent en bleu avec une coche, les suivantes restent grisées. Chaqu
    - *Chercher* : **partout** sur la carte, ou près d'une position approximative (plus rapide, lève les ambiguïtés des pièces symétriques).
    - **Scanner avec le robot** (v15, en haut de l'étape) : le robot fait un scan (le prochain tour reçu en USB, Wi-Fi ou simulation), la page le cherche
      sur la carte de l'onglet choisi (grille, vectorielle, ou tous les scans) et affiche **x, y, θ** avec un verdict (Fiable / À vérifier / Ambigu).
-     Le robot s'affiche en orange sur la carte. Le scan du robot n'est pas ajouté à la liste des scans. Avec « Près de… » (onglets Grille et Vectorielle),
+     Le robot s'affiche en orange sur la carte, avec un trait vers chaque point qu'il mesure (ce qu'il voit dans la pièce) ; la vue bascule d'elle-même sur l'onglet Carte. Le scan du robot n'est pas ajouté à la liste des scans. Avec « Près de… » (onglets Grille et Vectorielle),
      la recherche est plus rapide quand on sait à peu près où il est ; sinon elle couvre toute la carte.
    - *Comparer les méthodes* (replié) : le banc d'essai du Jour 2 (14 méthodes, vérité terrain, essais multiples, courbe de sensibilité ; onglet Localisation).
    - Seuls x, y et θ sont utilisés (pas de hauteur z). En simulation : 0 à 2 cm et moins de 2° sur des scans absents de la carte (≈ 2 s partout, 0,4 s près d'une position).

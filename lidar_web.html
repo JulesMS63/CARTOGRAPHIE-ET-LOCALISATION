@@ -4029,7 +4029,9 @@ regRefreshSelects();
 
 
 /* ================= Localisation (étape 6) : Grille · Vectorielle · Scan à scan ================= */
-const lm = { pane: 'grid', imp: { grid: null, vec: null } };           // imp.grid : {g, name, meta, ref} ; imp.vec : {segs, name, ref}
+const lm = { pane: 'grid', imp: { grid: null, vec: null } };
+/* La carte de localisation se dessine dans l'onglet Carte : on y bascule depuis Direct ou Grille 2D (pas depuis l'onglet Localisation du banc d'essai). */
+function lmToMapTab() { if (state.tab === 'live' || state.tab === 'grid') setTab('map'); }           // imp.grid : {g, name, meta, ref} ; imp.vec : {segs, name, ref}
 function lmSyncScans() {
   const sel = $('lmScan'), cur = sel.value;
   sel.innerHTML = state.scans.map((s, i) => `<option value="${i}">${esc(s.name)}</option>`).join('') || '<option value="">(aucun scan)</option>';
@@ -4046,7 +4048,7 @@ function lmSetPane(p) {
   document.querySelectorAll('#lmTabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.pane === p ? 'true' : 'false'));
   $('lmMap').hidden = p === 'scan'; $('lmScanPane').hidden = p !== 'scan';
   if (p !== 'scan') lmRefreshPane();
-  if (state.tab === 'live') setTab('map');
+  lmToMapTab();
   draw();
 }
 document.querySelectorAll('#lmTabs button').forEach(b => b.onclick = () => lmSetPane(b.dataset.pane));
@@ -4086,7 +4088,7 @@ async function lmImport(files) {
     }
   } catch (err) { setStatus('lmStatus', 'Fichier illisible : ' + err.message + '.', 'err'); return; }
   setStatus('lmStatus', '', ''); lmRefreshPane();
-  if (state.tab === 'live') setTab('map');
+  lmToMapTab();
   fitView();
 }
 function lmGridParams() {
@@ -4150,7 +4152,7 @@ function lmShow(scan, res) {
   $('lmResult').querySelectorAll('[data-alt]').forEach(b => b.onclick = () => {
     const c = alts[+b.dataset.alt], prev = reg.undo; regApply([{ scan, pose: c.pose }]); reg.undo = prev || reg.undo; $('btnRegUndo').hidden = false; $('lmUndo').hidden = false;
   });
-  if (state.tab === 'live') setTab('map');
+  lmToMapTab();
   setStatus('lmStatus', '', '');
 }
 /* ---------- le robot fait un scan, la page renvoie sa position ---------- */
@@ -4199,7 +4201,7 @@ async function robotGo() {
   }
   lm.robot = { scan, res }; robotSetPose(res.pose);
   flags.locRun = true; updateTimeline();
-  if (state.tab === 'live') setTab('map');
+  lmToMapTab();
 }
 function robotSetPose(p) {                                            // affiche la position choisie ; les autres positions possibles sont cliquables
   const r = lm.robot, res = r.res;
@@ -4272,8 +4274,19 @@ function drawLocLayer(lay) {
     });
   }
   if (target) {                                                       // le scan à localiser, au-dessus de tout, avec sa position actuelle
+    if (lm.robot) {                                                   // ce que le robot voit : un trait de lui vers chaque point mesuré
+      const pts = worldPoints(mapScan(target), target.pose), [rx, ry] = w2s(target.pose.x, target.pose.y);
+      ctx.save(); ctx.strokeStyle = target.color; ctx.globalAlpha = 0.16; ctx.lineWidth = 1; ctx.beginPath();
+      for (let i = 0; i < pts.length; i += 2) { const [px, py] = w2s(pts[i], pts[i + 1]); ctx.moveTo(rx, ry); ctx.lineTo(px, py); }
+      ctx.stroke(); ctx.restore();
+    }
     drawPoints(worldPoints(mapScan(target), target.pose), target.color, null, 2.8);
-    drawRobot(target.pose.x, target.pose.y, target.pose.th, target.color, 12);
+    if (lm.robot) {                                                   // halo : le robot se repère sur n'importe quel fond
+      const [hx, hy] = w2s(target.pose.x, target.pose.y);
+      ctx.beginPath(); ctx.arc(hx, hy, 20, 0, 2 * Math.PI); ctx.fillStyle = css('--canvas'); ctx.globalAlpha = 0.85; ctx.fill(); ctx.globalAlpha = 1;
+      ctx.lineWidth = 2.5; ctx.strokeStyle = target.color; ctx.stroke();
+    }
+    drawRobot(target.pose.x, target.pose.y, target.pose.th, target.color, lm.robot ? 15 : 12);
     const [sx, sy] = w2s(target.pose.x, target.pose.y); ctx.font = '700 12px ' + css('--font'); ctx.fillStyle = target.color;
     if (lm.robot) {                                                   // position du robot, lisible sur n'importe quel fond
       const txt = `Robot  x ${fmt(target.pose.x, 2)} · y ${fmt(target.pose.y, 2)} · θ ${fmt(target.pose.th, 0)}°`, tw = ctx.measureText(txt).width + 14;
@@ -4290,7 +4303,7 @@ function drawLocLayer(lay) {
 }
 (function () {                                                        // ouverture / fermeture de l'étape : le fond change
   const st = document.querySelector('.step[data-step=loc]'); if (!st) return;
-  new MutationObserver(() => { lmCache.key = ''; if (st.classList.contains('open') && state.tab === 'live') setTab('map'); draw(); }).observe(st, { attributes: true, attributeFilter: ['class'] });
+  new MutationObserver(() => { lmCache.key = ''; if (st.classList.contains('open')) lmToMapTab(); draw(); }).observe(st, { attributes: true, attributeFilter: ['class'] });
 })();
 
 
