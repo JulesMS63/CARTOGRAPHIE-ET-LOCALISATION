@@ -2,7 +2,7 @@
 const fs = require('fs'), assert = require('assert');
 const html = fs.readFileSync(process.argv[2], 'utf8');
 const core = html.split('/* CORE-START */')[1].split('/* CORE-END */')[0];
-const A = new Function(core + `; return {benchDataset, makeRefFromScans, registerScan, poseError, offsetPose, randomOffset, makeRng, densify, validPts, polarBins, visConflicts};`)();
+const A = new Function(core + `; return {simulateScan, benchDataset, makeRefFromScans, registerScan, poseError, offsetPose, randomOffset, makeRng, densify, validPts, polarBins, visConflicts};`)();
 let n = 0; const ok = (c, m) => { assert(c, m); n++; };
 const data = A.benchDataset(7, { noise: 0.01, outliers: 0.03 });
 const refOf = (idx) => A.makeRefFromScans(idx.map(i => ({ scan: data[i].scan, pose: data[i].truth })));
@@ -52,4 +52,27 @@ for (const [r, t] of [[0, 4], [1, 5], [5, 4], [4, 2], [7, 4], [6, 5]]) {
 const a = A.registerScan(refOf([0]), data[2].scan, { center: A.offsetPose(data[2].truth, 0.5, 0.3, 10), radius: 1, thRange: 30 });
 const b = A.registerScan(refOf([0]), data[2].scan, { center: A.offsetPose(data[2].truth, 0.5, 0.3, 10), radius: 1, thRange: 30 });
 ok(a.pose.x === b.pose.x && a.pose.th === b.pose.th, 'résultat identique à entrée identique');
+// --- en chaîne (robot qui avance et scanne) : chaque scan est recalé sur le précédent, sans dérive notable
+{
+  const rg = A.makeRng(11); let pose = { x: 1, y: 1, th: 0 }; const truth = [];
+  for (let i = 0; i < 14; i++) {
+    truth.push({ ...pose });
+    let nx = pose.x + 0.6 * Math.cos(pose.th * Math.PI / 180), ny = pose.y + 0.6 * Math.sin(pose.th * Math.PI / 180), th = pose.th;
+    if (nx < 0.6 || nx > 5.4 || ny < 0.6 || ny > 3.4) { th += 35; nx = pose.x; ny = pose.y; } else th += 12 * (rg() - 0.3);
+    pose = { x: nx, y: ny, th };
+  }
+  const scans = truth.map((p, i) => A.simulateScan('s' + i, p, rg, { noise: 0.01, outliers: 0.03 }));
+  const est = [truth[0]]; let allGood = true;
+  for (let i = 1; i < scans.length; i++) {
+    const res = A.registerScan(A.makeRefFromScans([{ scan: scans[i - 1], pose: est[i - 1] }]), scans[i], { center: est[i - 1], radius: 1.5, thRange: 45 });
+    est.push(res.pose); allGood = allGood && res.verdict === 'bonne';
+  }
+  const e = A.poseError(est[est.length - 1], truth[truth.length - 1]);
+  ok(allGood, 'chaîne de 14 scans : tous les liens « fiables »');
+  ok(e.pos < 0.05 && e.ang < 2, 'chaîne de 14 scans : erreur finale ' + e.pos.toFixed(3) + ' m / ' + e.ang.toFixed(1) + '°');
+  // un scan hors de la fenêtre de recherche n'est jamais annoncé « fiable » à tort
+  const far = A.registerScan(A.makeRefFromScans([{ scan: scans[0], pose: truth[0] }]), scans[6], { center: truth[0], radius: 0.5, thRange: 10 });
+  const ef = A.poseError(far.pose, truth[6]);
+  ok(ef.pos <= 0.05 || far.verdict !== 'bonne', 'hors fenêtre : pas de faux « fiable »');
+}
 console.log('reg_test : ' + n + ' vérifications OK');

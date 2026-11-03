@@ -372,7 +372,7 @@
             <button id="btnCapture" class="btn primary" type="button">Capturer (Espace)</button>
             <label class="check"><input type="checkbox" id="optFreeze"> Figer l'affichage</label>
           </div>
-          <label class="check"><input type="checkbox" id="capAutoReg"> Corriger la position par recalage sur le scan de référence (étape 3)</label>
+          <label class="check"><input type="checkbox" id="capAutoReg"> Placer chaque nouveau scan par recalage sur le scan précédent (réglages à l'étape 3)</label>
           <div class="status" id="capStatus" aria-live="polite"></div>
           <p class="hint">Le robot reste immobile pendant la capture. Origine : le repère du premier scan (0, 0, 0). Depuis le scan précédent : avant, gauche et rotation sont mesurés dans le repère du robot au scan précédent. La pose se corrige ensuite à l'étape 3.</p>
         </div></div></div>
@@ -400,10 +400,11 @@
           <p class="hint">Dans l'onglet Carte, cochez « Glisser : le scan choisi », puis faites glisser (Maj pour tourner). Flèches, <code>,</code> et <code>.</code> affinent la pose.</p>
           <div class="regbox">
             <div class="lab">Retrouver la position automatiquement</div>
-            <p class="hint">La page recale le scan choisi dans la liste sur un scan déjà placé : pas besoin de mesurer sa position. Donnez une position approximative dans la liste, ou cherchez partout.</p>
+            <p class="hint">La page recale le scan choisi dans la liste sur le scan précédent (ou un autre scan au choix) : pas besoin de mesurer sa position. C'est la méthode adaptée à un robot qui scanne en avançant : chaque scan est placé par rapport au précédent.</p>
             <div class="grid2">
               <div class="field"><label for="regRef">Scan de référence</label><select id="regRef"></select></div>
               <div class="field"><label for="regMode">Où chercher</label><select id="regMode">
+                <option value="ref">Près de la référence</option>
                 <option value="near">Près de la pose saisie</option>
                 <option value="wide">Partout</option></select></div>
               <div class="field"><label for="regRadius">Rayon (m)</label><input type="number" id="regRadius" value="1.5" min="0.2" max="10" step="0.1"></div>
@@ -411,7 +412,7 @@
             </div>
             <div class="row">
               <button class="btn primary" id="btnReg" type="button">Retrouver le scan choisi</button>
-              <button class="btn sm" id="btnRegAll" type="button">Recaler tous les scans</button>
+              <button class="btn sm" id="btnRegAll" type="button" title="Recale tous les scans d'un coup, du premier au dernier">Recaler tous les scans</button>
               <button class="btn sm" id="btnRegUndo" type="button" hidden>Annuler</button>
             </div>
             <div class="status" id="regStatus" aria-live="polite"></div>
@@ -3452,9 +3453,10 @@ const REG_LABEL = { bonne: ['Fiable', 'ok'], douteuse: ['À vérifier', 'warn'],
 const regPoseTxt = p => `x ${fmt(p.x, 2)} m · y ${fmt(p.y, 2)} m · θ ${fmt(p.th, 1)}°`;
 function regRefreshSelects() {
   const sel = $('regRef'), cur = sel.value;
-  sel.innerHTML = state.scans.map((s, i) => `<option value="${i}">${esc(s.name)}${i === 0 ? ' (1er scan)' : ''}</option>`).join('')
+  sel.innerHTML = '<option value="prev">Le scan précédent (conseillé)</option>'
+    + state.scans.map((s, i) => `<option value="${i}">${esc(s.name)}${i === 0 ? ' (1er scan)' : ''}</option>`).join('')
     + (state.scans.length > 2 ? '<option value="all">Tous les autres scans</option>' : '');
-  sel.value = [...sel.options].some(o => o.value === cur) ? cur : '0';
+  sel.value = [...sel.options].some(o => o.value === cur) ? cur : 'prev';
   $('btnReg').disabled = $('btnRegAll').disabled = state.scans.length < 2 || reg.busy;
 }
 $('regMode').addEventListener('change', () => {
@@ -3465,11 +3467,13 @@ function regParams() {
   const num = (id, d, lo, hi) => { const v = parseFloat($(id).value); return isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
   return { mode: $('regMode').value, radius: num('regRadius', 1.5, 0.2, 10), angle: num('regAngle', 45, 2, 180) };
 }
-/* Référence pour la cible idx : un scan, ou tous les autres. */
-function regRefList(idx, refChoice, extra) {
+/* Référence pour la cible idx : le scan précédent (par défaut), un scan choisi, ou tous les autres.
+   poseOf(s) donne la pose à utiliser pour un scan (par défaut sa pose actuelle ; en recalage en chaîne : la pose qui vient d'être trouvée). */
+function regRefList(idx, refChoice, extra, poseOf = s => s.pose) {
   const items = [];
-  const add = s => { if (s !== state.scans[idx]) items.push({ scan: cleanOf(s), pose: { ...s.pose } }); };
+  const add = s => { if (s !== state.scans[idx]) items.push({ scan: cleanOf(s), pose: { ...poseOf(s) } }); };
   if (refChoice === 'all') state.scans.forEach((s, i) => { if (s.visible !== false) add(s); });
+  else if (refChoice === 'prev') { if (idx > 0) add(state.scans[idx - 1]); }
   else add(state.scans[+refChoice]);
   for (const d of extra || []) if (d.scan !== state.scans[idx] && !items.some(it => it.scan === cleanOf(d.scan))) items.push({ scan: cleanOf(d.scan), pose: { ...d.pose } });
   return items;
@@ -3477,10 +3481,11 @@ function regRefList(idx, refChoice, extra) {
 function regSearch(idx, items, P) {
   const target = state.scans[idx], ref = makeRefFromScans(items);
   if (!ref) return { verdict: 'echec', reason: 'la référence n’a pas assez de points', candidates: [], ms: 0 };
-  const near = P.mode === 'near';
+  const wide = P.mode === 'wide';
   const cx = items.reduce((a, it) => a + it.pose.x, 0) / items.length, cy = items.reduce((a, it) => a + it.pose.y, 0) / items.length;
-  const center = near ? { ...target.pose } : { x: cx, y: cy, th: 0 };
-  return registerScan(ref, cleanOf(target), { center, radius: P.radius, thRange: near ? P.angle : 180, limits: near ? undefined : { ambig: 0.6, altInl: 0.6 } });
+  // « ref » : on cherche autour de la pose du scan de référence (le robot n'a pas beaucoup bougé) ; « near » : autour de la pose saisie ; « wide » : partout
+  const center = P.mode === 'near' ? { ...target.pose } : { x: cx, y: cy, th: wide ? 0 : items[items.length - 1].pose.th };
+  return registerScan(ref, cleanOf(target), { center, radius: P.radius, thRange: wide ? 180 : P.angle, limits: wide ? { ambig: 0.6, altInl: 0.6 } : undefined });
 }
 function regApply(changes) {                                        // changes : [{scan, pose}] ; mémorise les anciennes poses pour Annuler
   reg.undo = changes.map(c => ({ scan: c.scan, pose: { ...c.scan.pose } }));
@@ -3501,7 +3506,8 @@ async function regRun(idx, o = {}) {
   if (reg.busy) return;
   const target = state.scans[idx]; if (!target) return;
   let refChoice = $('regRef').value;
-  if (refChoice !== 'all' && +refChoice === idx) refChoice = idx === 0 ? '1' : '0';
+  if (refChoice === 'prev' && idx === 0) { setStatus('regStatus', `${target.name} est le premier scan : il définit l’origine. Choisissez un autre scan à placer, ou une autre référence.`, 'warn'); return; }
+  if (refChoice !== 'all' && refChoice !== 'prev' && +refChoice === idx) refChoice = idx === 0 ? '1' : '0';
   const items = regRefList(idx, refChoice);
   if (!items.length) { setStatus('regStatus', 'Il faut au moins deux scans : un de référence et celui à placer.', 'err'); return; }
   regBusy(true, `Recherche de la position de ${target.name}…`); await nextPaint();
@@ -3537,16 +3543,19 @@ $('btnReg').onclick = () => regRun(state.selected >= 0 ? state.selected : state.
 /* Tous les scans à partir de la référence : chaque scan se recale sur la référence et sur les scans déjà trouvés fiables. */
 $('btnRegAll').onclick = async () => {
   if (reg.busy || state.scans.length < 2) return;
-  let base = $('regRef').value; base = base === 'all' ? 0 : +base;
-  const P = regParams(), done = [], rows = [], changes = [];          // done : scans déjà trouvés fiables, à leur pose trouvée (pas encore appliquée)
+  const choice = $('regRef').value, chain = choice === 'prev';
+  const base = chain ? 0 : (choice === 'all' ? 0 : +choice);
+  const P = regParams(), done = [], rows = [], changes = [];          // done : scans déjà trouvés fiables (hors chaîne), à leur pose trouvée, pas encore appliquée
+  const found = new Map([[state.scans[base], { ...state.scans[base].pose }]]);   // en chaîne : poses trouvées, utilisées par le scan suivant
   regBusy(true, 'Recalage de tous les scans…');
   for (let i = 0; i < state.scans.length; i++) {
     if (i === base) continue;
     const s = state.scans[i]; setStatus('regStatus', `Recalage de ${s.name} (${rows.length + 1}/${state.scans.length - 1})…`, ''); await nextPaint();
-    const res = regSearch(i, regRefList(i, String(base), done), P);
+    const res = chain ? regSearch(i, regRefList(i, 'prev', null, sc => found.get(sc) || sc.pose), P) : regSearch(i, regRefList(i, String(base), done), P);
     rows.push({ s, res });
     if (res.verdict !== 'echec') changes.push({ scan: s, pose: res.pose });
-    if (res.verdict === 'bonne') done.push({ scan: s, pose: res.pose });
+    if (chain) found.set(s, res.verdict !== 'echec' ? res.pose : { ...s.pose });
+    else if (res.verdict === 'bonne') done.push({ scan: s, pose: res.pose });
   }
   regBusy(false);
   if (changes.length) regApply(changes);
@@ -3554,7 +3563,7 @@ $('btnRegAll').onclick = async () => {
   const html = rows.map(r => { const { s, res } = r; const [lab, cls] = REG_LABEL[res.verdict];
     return `<tr><td>${esc(s.name)}</td><td><span class="badge ${cls}">${lab}</span></td><td>${res.pose && res.verdict !== 'echec' ? esc(regPoseTxt(res.pose)) : '–'}</td><td>${isFinite(res.inlierFrac) ? Math.round(100 * res.inlierFrac) + ' %' : '–'}</td><td>${res.verdict === 'ambigue' || res.verdict === 'douteuse' ? `<button class="btn sm" type="button" data-row="${rows.indexOf(r)}">Autres positions</button>` : ''}</td></tr>`; }).join('');
   $('regResult').innerHTML = `<table class="rg"><thead><tr><th>Scan</th><th>Résultat</th><th>Position</th><th>Recouvrement</th><th></th></tr></thead><tbody>${html}</tbody></table>
-    <div class="hint">Seuls les scans « Fiable » servent de référence aux suivants. Vérifiez les autres sur la carte, ou relancez-les un par un.</div>`;
+    <div class="hint">${chain ? 'Chaque scan est recalé sur le précédent : une erreur se propage aux scans suivants, donc vérifiez d’abord les lignes « À vérifier » ou « Ambigu ».' : 'Seuls les scans « Fiable » servent de référence aux suivants.'} Vérifiez sur la carte, ou relancez les scans douteux un par un.</div>`;
   $('regResult').querySelectorAll('[data-row]').forEach(b => b.onclick = () => { const r = rows[+b.dataset.row]; state.selected = state.scans.indexOf(r.s); renderScanList(); draw(); regShowResult(r.s, r.res); });
   const bad = rows.filter(r => r.res.verdict !== 'bonne').length;
   setStatus('regStatus', bad ? `${rows.length - bad} scan(s) placé(s) avec confiance, ${bad} à vérifier.` : `${rows.length} scan(s) placé(s).`, bad ? 'warn' : 'ok');

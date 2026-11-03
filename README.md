@@ -46,13 +46,22 @@ terminées passent en bleu avec une coche, les suivantes restent grisées. Chaqu
    « Distance min. au capteur » (0,20 m), « Écart toléré dans un groupe » (0,10 m) et, en option, « Exiger un 2e scan »
    (un point n'est gardé que si un autre scan le revoit à moins de 0,10 m : demande des poses justes). Les scans bruts
    sont conservés : décocher la case les réaffiche.
-   **Retrouver la position automatiquement** (bas de l'étape 3, ou case « Corriger la position par recalage » à l'étape 2) :
-   la page recale le scan choisi sur un scan de référence (le 1er par défaut, ou tous les autres), sans qu'on mesure sa position.
-   - *Près de la pose saisie* (conseillé) : donner une position approximative (par défaut ±1,5 m et ±45°). En simulation, le bon résultat est retrouvé dans 100 % des essais jusqu'à 1,5 m / 45° d'erreur.
-   - *Partout* : rayon et angle larges (6 m, ±180°), pour un scan dont on ne sait rien. Dans une salle rectangulaire, la symétrie peut tromper : la page affiche alors **Ambigu** et propose les autres positions possibles (boutons à cliquer).
-   - **Recaler tous les scans** : chaque scan est placé à partir de la référence ; seuls ceux jugés « Fiable » servent de référence aux suivants.
-   - Verdicts : *Fiable* (bon recouvrement, une seule solution), *À vérifier* (recouvrement faible), *Ambigu* (plusieurs solutions aussi bonnes), *Échec* (les scans ne se recoupent pas : la pose n'est pas modifiée). Le bouton **Annuler** rétablit les anciennes positions.
-   - Limites : il faut que les deux scans voient une partie commune de la pièce ; un capteur collé à un mur ou un couloir sans relief laisse une position possible le long du mur. Toujours vérifier sur l'onglet Carte. Non validé avec le vrai lidar.
+   **Retrouver la position automatiquement** (bas de l'étape 3, ou case « Placer chaque nouveau scan par recalage » à l'étape 2) :
+   la page recale le scan choisi dans la liste, sans qu'on mesure sa position.
+   - **Référence : le scan précédent (par défaut).** Chaque scan est placé par rapport à celui d'avant : c'est la méthode adaptée
+     à un robot qui scanne en avançant. La liste déroulante permet de choisir un autre scan (le 1er, un scan précis) ou « Tous les autres scans ».
+   - **Où chercher** : *Près de la référence* (par défaut : autour de la pose du scan de référence, rayon 1,5 m et ±45°, à adapter à la distance
+     réellement parcourue entre deux scans), *Près de la pose saisie* (autour de la position tapée dans la liste) ou *Partout* (6 m, tous les angles :
+     dans une salle rectangulaire la symétrie peut tromper, la page affiche alors **Ambigu** et propose les autres positions).
+   - **Recaler tous les scans** (facultatif) : avec « le scan précédent », recalage en chaîne du 1er au dernier (une erreur se propage aux scans suivants :
+     vérifier d'abord les lignes « À vérifier » ou « Ambigu »). Avec un scan choisi, tous les scans sont recalés sur lui et sur ceux déjà trouvés fiables.
+   - Case de l'étape 2 (désactivée par défaut) : chaque scan capturé est recalé aussitôt sur le précédent.
+   - Verdicts : *Fiable* (bon recouvrement, une seule solution), *À vérifier* (recouvrement faible), *Ambigu* (plusieurs solutions aussi bonnes),
+     *Échec* (les scans ne se recoupent pas : la pose n'est pas modifiée). Le bouton **Annuler** rétablit les anciennes positions.
+   - En simulation : chaîne de 14 scans espacés de 0,6 m, erreur finale 0,5 cm ; tout reste fiable jusqu'à 1,2 m / 25° entre deux scans.
+   - Limites : les deux scans doivent voir une partie commune de la pièce ; si le robot a bougé plus que le rayon ou l'angle de recherche, la bonne
+     position n'est pas trouvée (augmenter les valeurs) ; un capteur collé à un mur ou un couloir sans relief laisse une position possible le long du mur.
+     Toujours vérifier sur l'onglet Carte. Non validé avec le vrai lidar.
    Les `scans/*.csv` exportés sont filtrés et commencent par une ligne `# pose: x=… y=… theta=…` : la position suit le fichier et est retrouvée à l'import ; `projet.json` reste brut.
 5. **Grille d'occupation 2D** : onglet **Grille 2D**. La grille sans filtre (à gauche) et avec filtre (à droite) se comparent avec un curseur de séparation ; un second curseur règle la force du filtre ; la taille des carreaux se saisit en millimètres (entier, 10 à 500). Un tableau compte les cellules occupées et celles qui sont isolées.
 6. **Localisation (Jour 2)** : onglet **Localisation**, voir la section ci-dessous.
@@ -105,7 +114,7 @@ mais exigent une pose initiale proche. Sur le banc simulé (bruit 2 cm, 6 % de p
 tombe à 75 % vers 0,5 m / 15° ; le filtre à particules tient encore à 1,2 m / 40°. **Rien de cela n'a été mesuré avec ton lidar** :
 refaire les mesures sur tes scans.
 
-Tests du noyau (Node) : `node tests/web_loc_test.js lidar_web.html` (150 vérifications) et `node tests/web_reg_test.js lidar_web.html` (29 vérifications, recalage automatique).
+Tests du noyau (Node) : `node tests/web_loc_test.js lidar_web.html` (150 vérifications) et `node tests/web_reg_test.js lidar_web.html` (32 vérifications, recalage automatique).
 
 ## Application de bureau : `lidar_app.py` (à ouvrir dans VS Code)
 
