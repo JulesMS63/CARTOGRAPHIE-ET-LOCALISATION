@@ -69,7 +69,9 @@ const uint8_t I2C_ADRESSE = 0x30;
 const uint8_t PIN_MOTEUR[8] = {5, 18, 19, 21, 2, 4, 16, 17};   // M1A M1B M2A M2B M3A M3B M4A M4B
 const char*   NOM_ROUE[4]   = {"avant gauche (M2)", "avant droit (M1)", "arriere gauche (M3)", "arriere droit (M4)"};
 const uint8_t MOTEUR_DE_ROUE[4] = {2, 1, 3, 4};   // avant gauche = M2, avant droit = M1, arrière gauche = M3, arrière droit = M4
-int8_t sensMoteur[4] = {1, 1, 1, 1};              // M1..M4 : -1 pour inverser le sens d'un moteur
+// M1..M4 : -1 inverse le sens d'un moteur. Les deux moteurs de GAUCHE (M2 avant gauche, M3 arrière gauche)
+// sont montés en miroir : avec le PWM « avant » ils font reculer leur roue, donc ils sont inversés par défaut.
+int8_t sensMoteur[4] = {1, -1, -1, 1};
 Preferences memoire;                              // les « inverser » de la page de test sont gardés après un redémarrage
 
 // Façon d'envoyer le PWM
@@ -502,7 +504,7 @@ void handleSens() {
   sensMoteur[m - 1] = argEntier("s", 1) < 0 ? -1 : 1;
   uint8_t masque = 0;
   for (int i = 0; i < 4; i++) if (sensMoteur[i] < 0) masque |= (1 << i);
-  memoire.putUChar("sens", masque);      // gardé après un redémarrage
+  memoire.putUChar("sens2", masque);      // gardé après un redémarrage
   char t[90];
   snprintf(t, sizeof(t), "sens M%d = %d  (sensMoteur = {%d, %d, %d, %d})", m, sensMoteur[m - 1],
            sensMoteur[0], sensMoteur[1], sensMoteur[2], sensMoteur[3]);
@@ -567,7 +569,7 @@ void commandeSerie() {
 void setup() {
   if (modeMoteur == MODE_GPIO) gpioActiver(true);   // moteurs à l'arrêt (PWM à 0) dès le démarrage
   memoire.begin("robot", false);
-  uint8_t masque = memoire.getUChar("sens", 0);
+  uint8_t masque = memoire.getUChar("sens2", 0x06);   // 0x06 = M2 et M3 inversés (réglage par défaut)
   for (int i = 0; i < 4; i++) sensMoteur[i] = (masque >> i) & 1 ? -1 : 1;
   Serial.begin(115200);
   delay(300);

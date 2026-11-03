@@ -118,7 +118,7 @@ M1 avant droit, M2 avant gauche, M3 arrière gauche, M4 arrière droit). Les mon
 sélectionnables pour comparer. Le sketch n'est pas encore validé sur le robot : le sens de chaque moteur se règle avec les cases « inverser » de la page de test.
 
 **Page de test PWM** : connecté au réseau `Robot-LiDAR`, ouvrir `http://192.168.4.1/` : choix du mode, 8 curseurs (M1A à M4B), avancer / reculer, un moteur à la fois,
-case « inverser » par moteur (enregistrée dans l'ESP32, conservée après redémarrage), boutons de mouvement (avancer, translations, rotations, 1 s) pour valider la
+case « inverser » par moteur (enregistrée dans l'ESP32, conservée après redémarrage ; par défaut M2 et M3, les moteurs de gauche, sont inversés), boutons de mouvement (avancer, translations, rotations, 1 s) pour valider la
 matrice mecanum au sol. Tout s'arrête seul 3 s après la perte de la liaison.
 Bibliothèques : LD06 (archive du TP), WebSockets (Markus Sattler), MecanumCar_v2 (module).
 
