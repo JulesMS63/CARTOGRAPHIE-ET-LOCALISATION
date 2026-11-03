@@ -12,11 +12,17 @@ Formats reconnus automatiquement (d'après l'en-tête du fichier) :
 4. Export MapTool :
        angle_deg,r_m,x_rel_m,y_rel_m      (r_m = 0 -> pas d'impact)
 
+Position du scan : nos fichiers .csv commencent par une ligne de commentaire
+       # pose: x=1.2000 y=0.5000 theta=30.0000        (x, y en m ; theta en degrés)
+La position suit donc le fichier : elle est relue par `load_scans` (attribut `scan.pose`).
+Les autres lecteurs voient simplement un commentaire.
+
 Dans tous les cas on recalcule x et y NOUS-MÊMES à partir de (angle, distance),
 on n'utilise pas les colonnes x/y de la librairie (voir RAPPORT : signe de y).
 """
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,6 +42,7 @@ class Scan:
     angles: np.ndarray       # radians, sens anti-horaire (math)
     ranges: np.ndarray       # mètres
     intensity: np.ndarray    # 0..255
+    pose: tuple = None       # (x_m, y_m, theta_deg) relue dans le fichier .csv, ou None si inconnue
 
     def __len__(self):
         return len(self.ranges)
@@ -70,6 +77,28 @@ def _make_scan(name, angles_deg, ranges_m, intensity):
     return scan
 
 
+_POSE_RE = re.compile(r"^#\s*pose\b", re.IGNORECASE)
+
+
+def parse_pose_comment(line):
+    """'# pose: x=1.2 y=0.5 theta=30' -> (1.2, 0.5, 30.0), ou None si ce n'est pas une ligne de pose."""
+    if not _POSE_RE.match(line):
+        return None
+    values = {}
+    for key in ("x", "y", "theta"):
+        m = re.search(rf"\b{key}\s*=\s*(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)", line, re.IGNORECASE)
+        if not m:
+            return None
+        values[key] = float(m.group(1))
+    return values["x"], values["y"], values["theta"]
+
+
+def pose_comment(pose):
+    """Ligne de commentaire à mettre en tête d'un fichier .csv pour y conserver la position du scan."""
+    x, y, theta = pose
+    return f"# pose: x={x:.4f} y={y:.4f} theta={theta:.4f}"
+
+
 def _is_number(text):
     try:
         float(text)
@@ -85,16 +114,23 @@ def load_scans(path):
 
     fmt = "esp32"            # format par défaut si pas d'en-tête
     blocks = []              # liste de listes de lignes numériques
+    block_poses = []         # une pose (ou None) par bloc
     current = []
+    seen_pose = None
 
     for raw in lines:
         line = raw.strip()
         if line == "":
             if current:
                 blocks.append(current)
+                block_poses.append(seen_pose)
                 current = []
+                seen_pose = None
             continue
         if line.startswith("#"):
+            found = parse_pose_comment(line)
+            if found is not None:
+                seen_pose = found
             continue
 
         fields = [f.strip() for f in line.split(",")]
@@ -116,6 +152,7 @@ def load_scans(path):
 
     if current:
         blocks.append(current)
+        block_poses.append(seen_pose)
 
     scans = []
     for k, rows in enumerate(blocks):
@@ -142,7 +179,9 @@ def load_scans(path):
             dist = [r[1] for r in rows_ok]
             inten = [255 for _ in rows_ok]
 
-        scans.append(_make_scan(name, angle, dist, inten))
+        scan = _make_scan(name, angle, dist, inten)
+        scan.pose = block_poses[k]
+        scans.append(scan)
     return scans
 
 
@@ -155,11 +194,17 @@ def load_scan_folder(folder):
     return scans
 
 
-def save_scan(scan, path):
-    """Sauvegarde un scan au format maison : angle_deg,distance_mm,intensity."""
+def save_scan(scan, path, pose=None):
+    """Sauvegarde un scan au format maison : angle_deg,distance_mm,intensity.
+
+    La position (`pose`, ou à défaut `scan.pose`) est écrite en commentaire sur la première ligne :
+    le fichier garde ainsi la position du scan, et `load_scans` la retrouve.
+    """
     path = Path(path)
+    pose = pose if pose is not None else scan.pose
     angles_deg = np.degrees(scan.angles)
-    lines = ["angle_deg,distance_mm,intensity"]
+    lines = [pose_comment(pose)] if pose is not None else []
+    lines.append("angle_deg,distance_mm,intensity")
     for a, r, i in zip(angles_deg, scan.ranges, scan.intensity):
         lines.append(f"{a:.3f},{r * 1000.0:.0f},{int(i)}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -177,3 +222,15 @@ def save_poses(poses, path):
     data = {name: [round(float(v), 4) for v in pose] for name, pose in poses.items()}
     Path(path).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n",
                           encoding="utf-8")
+
+
+def poses_for(scans, poses=None):
+    """{nom: pose} pour des scans : le dictionnaire `poses` (fichier poses.json) l'emporte, sinon la
+    position écrite dans le .csv. Les scans sans position connue sont absents du résultat."""
+    result = {}
+    for scan in scans:
+        if poses and scan.name in poses:
+            result[scan.name] = tuple(poses[scan.name])
+        elif scan.pose is not None:
+            result[scan.name] = tuple(scan.pose)
+    return result

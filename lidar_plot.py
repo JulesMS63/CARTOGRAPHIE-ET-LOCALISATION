@@ -104,7 +104,7 @@ def content_bounds(session, margin=0.4):
     """(xmin, xmax, ymin, ymax) englobant les scans visibles, ou None."""
     xs, ys = [], []
     for e in session.visible():
-        pts = e.scan.points_world(e.pose)
+        pts = session.used(e).points_world(e.pose)
         xs.extend(pts[:, 0])
         ys.extend(pts[:, 1])
         xs.append(e.pose[0])
@@ -140,7 +140,7 @@ def draw_map(ax, session, selected=-1, show_points=True, show_grid=True, show_se
     for k, e in enumerate(session.entries):
         if not e.visible:
             continue
-        pts = e.scan.points_world(e.pose)
+        pts = session.used(e).points_world(e.pose)
         top = 5 if k == selected else 4
         cloud = None
         if show_points:
@@ -164,12 +164,12 @@ def draw_map(ax, session, selected=-1, show_points=True, show_grid=True, show_se
     return artists
 
 
-def move_scan_artists(artists, entry):
+def move_scan_artists(artists, entry, filter_params):
     """Met à jour le nuage, le robot et l'étiquette d'un scan sans tout redessiner (glisser-déposer)."""
     cloud, robot, label = artists[entry.name]
     x, y, th = entry.pose
     if cloud is not None:
-        cloud.set_offsets(transform_points(entry.scan.points_local(), entry.pose))
+        cloud.set_offsets(transform_points(entry.used(filter_params).points_local(), entry.pose))
     robot.set_data([x], [y])
     robot.set_marker(robot_marker(th))
     label.set_position((x, y))
@@ -184,4 +184,138 @@ def render_map_png(session, selected=-1):
     draw_map(ax, session, selected)
     ax.set_title(f"Carte du relevé · {session.map_info}" if session.map_info else "Carte du relevé",
                  color=INK, fontsize=10)
+    return fig_to_png_bytes(fig)
+
+
+# --------------------------------------------------------------------------
+# Vue « Grille 2D » : sans filtre à gauche, avec filtre à droite, séparés par un curseur
+# --------------------------------------------------------------------------
+GRID_OCC = (26 / 255, 32 / 255, 39 / 255, 1.0)           # cellule occupée : opaque, bien lisible
+GRID_FREE = (100 / 255, 116 / 255, 139 / 255, 0.22)      # cellule libre : voile gris-bleu
+WIPE_COLOR = LIVE
+
+
+def grid_image(grid):
+    """Image RGBA (origine en bas) : occupé foncé, libre en voile, inconnu transparent."""
+    from gridmap import FREE, OCCUPIED
+    state = grid.classify()
+    rgba = np.zeros(state.shape + (4,))
+    rgba[state == FREE] = GRID_FREE
+    rgba[state == OCCUPIED] = GRID_OCC
+    return rgba
+
+
+def pair_bounds(session, pair, margin=0.4):
+    """Cadrage conseillé : le contenu de la grille avec filtre (sans les rares points lointains non filtrés)."""
+    xs, ys = [], []
+    for e in session.visible():
+        pts = session.used(e).points_world(e.pose)
+        if len(pts):
+            xs.extend((pts[:, 0].min(), pts[:, 0].max()))
+            ys.extend((pts[:, 1].min(), pts[:, 1].max()))
+        xs.append(e.pose[0])
+        ys.append(e.pose[1])
+    if not xs:
+        x0, x1, y0, y1 = pair.raw.extent()
+        return x0, x1, y0, y1
+    return min(xs) - margin, max(xs) + margin, min(ys) - margin, max(ys) + margin
+
+
+def draw_grid(ax, session, pair, mode="cmp", wipe=0.5, view=None, selected=-1):
+    """Dessine la grille 2D. mode : 'cmp' (comparaison), 'raw' (sans filtre) ou 'flt' (avec filtre).
+
+    Retourne un dict d'éléments graphiques pour déplacer la séparation sans tout redessiner
+    (voir `move_wipe`).
+    """
+    from matplotlib.patches import Rectangle
+    ax.clear()
+    style_axes(ax)
+    ax.grid(True, color=GRID, lw=0.8)
+    ax.set_axisbelow(True)
+    ax.set_xlabel("x (m)", color=MUTED, fontsize=8)
+    ax.set_ylabel("y (m)", color=MUTED, fontsize=8)
+    if pair is None:
+        ax.set_xlim(-1, 7)
+        ax.set_ylim(-1, 5)
+        return {}
+    xmin, xmax, ymin, ymax = view if view is not None else pair_bounds(session, pair)
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+    ax.apply_aspect()                       # l'aspect « égal » élargit une des limites : on relit les vraies
+    xmin, xmax = ax.get_xlim()
+    ymin, ymax = ax.get_ylim()
+
+    extent = pair.raw.extent()
+    art = {"mode": mode}
+    if mode == "cmp":
+        x_w = xmin + wipe * (xmax - xmin)
+        big = 1e3
+        left = Rectangle((xmin - big, ymin - big), x_w - xmin + big, 2 * big + (ymax - ymin), transform=ax.transData)
+        right = Rectangle((x_w, ymin - big), xmax - x_w + big, 2 * big + (ymax - ymin), transform=ax.transData)
+        im_raw = ax.imshow(grid_image(pair.raw), origin="lower", extent=extent, interpolation="nearest", zorder=1)
+        im_flt = ax.imshow(grid_image(pair.flt), origin="lower", extent=extent, interpolation="nearest", zorder=1)
+        im_raw.set_clip_path(left)
+        im_flt.set_clip_path(right)
+        line = ax.axvline(x_w, color=WIPE_COLOR, lw=2, zorder=8)
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(ymin, ymax)
+        art.update(left=left, right=right, line=line, ax=ax, big=big)
+        art["label_l"] = ax.text(0.01, 0.99, "Sans filtre", transform=ax.transAxes, ha="left", va="top",
+                                 color=MUTED, fontsize=9, fontweight="bold", zorder=9)
+        art["label_r"] = ax.text(0.99, 0.99, "Avec filtre", transform=ax.transAxes, ha="right", va="top",
+                                 color=MUTED, fontsize=9, fontweight="bold", zorder=9)
+    else:
+        grid = pair.raw if mode == "raw" else pair.flt
+        ax.imshow(grid_image(grid), origin="lower", extent=extent, interpolation="nearest", zorder=1)
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(ymin, ymax)
+    for k, e in enumerate(session.entries):
+        if e.visible:
+            draw_robot(ax, e.pose[0], e.pose[1], e.pose[2], e.color, size=9 if k == selected else 7)
+    return art
+
+
+def move_wipe(art, wipe):
+    """Déplace la séparation (0 = tout à droite, 1 = tout à gauche) sans redessiner les images.
+
+    La fraction se calcule sur les limites actuelles de l'axe : elle reste juste après un zoom ou un déplacement.
+    """
+    if art.get("mode") != "cmp":
+        return
+    ax = art["ax"]
+    xmin, xmax = ax.get_xlim()
+    ymin, ymax = ax.get_ylim()
+    big = art["big"]
+    x_w = xmin + wipe * (xmax - xmin)
+    art["left"].set_xy((xmin - big, ymin - big))
+    art["left"].set_width(x_w - xmin + big)
+    art["left"].set_height(2 * big + (ymax - ymin))
+    art["right"].set_xy((x_w, ymin - big))
+    art["right"].set_width(xmax - x_w + big)
+    art["right"].set_height(2 * big + (ymax - ymin))
+    art["line"].set_xdata([x_w, x_w])
+
+
+def wipe_fraction(art):
+    """Position actuelle de la séparation, entre 0 et 1 (pour la redessiner au même endroit)."""
+    ax = art["ax"]
+    xmin, xmax = ax.get_xlim()
+    x_w = art["line"].get_xdata()[0]
+    return min(1.0, max(0.0, (x_w - xmin) / (xmax - xmin))) if xmax > xmin else 0.5
+
+
+def render_comparison_png(session, pair):
+    """Image « sans filtre | avec filtre » côte à côte, avec les chiffres en titre. Retourne les octets PNG."""
+    from matplotlib.figure import Figure
+    from lidar_session import fig_to_png_bytes
+    fig = Figure(figsize=(13, 6), facecolor=CANVAS)
+    axes = fig.subplots(1, 2)
+    view = pair_bounds(session, pair)
+    for ax, mode, title in zip(axes, ("raw", "flt"), ("Sans filtre", "Avec filtre")):
+        draw_grid(ax, session, pair, mode, view=view)
+        ax.set_title(title, color=INK, fontsize=10)
+    st = pair.stats
+    fig.suptitle(f"Grille d'occupation 2D · carreaux de {pair.cell_mm} mm · "
+                 f"cellules occupées {st['raw']['occ']} → {st['flt']['occ']}, "
+                 f"isolées {st['raw']['iso']} → {st['flt']['iso']}", fontsize=10)
     return fig_to_png_bytes(fig)

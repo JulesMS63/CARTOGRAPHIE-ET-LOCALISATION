@@ -3,12 +3,13 @@
 Lancer (depuis le dossier du projet, environnement virtuel activé) :
     python lidar_app.py
 
-Les 5 étapes de la colonne de gauche reprennent la page web `lidar_web.html` :
+Les 6 étapes de la colonne de gauche reprennent la page web `lidar_web.html` :
     1. Connecter le lidar      (port série de l'ESP32, ou simulation sans robot)
     2. Capturer des scans      (position du robot : depuis l'origine ou depuis le scan précédent)
     3. Placer les scans        (onglet Carte : glisser un scan à la souris, ou saisir sa pose)
-    4. Régler les cartes       (facultatif : tolérances de la grille et des segments)
-    5. Exporter                (.zip lisible par gridmap_tool.py et vectormap_tool.py)
+    4. Régler les cartes       (facultatif : tolérances, taille des carreaux en mm, filtre des points isolés)
+    5. Grille d'occupation 2D  (onglet « Grille 2D » : comparer sans / avec filtre grâce à un curseur)
+    6. Exporter                (.zip lisible par gridmap_tool.py et vectormap_tool.py)
 
 Le calcul (grille d'occupation, segments, carte vectorielle) vient des modules du TP :
     gridmap.py, segments.py, vectormap.py. L'interface n'ajoute que l'acquisition et l'affichage.
@@ -30,22 +31,30 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg  # noqa: E402
 from matplotlib.figure import Figure  # noqa: E402
 
 import lidar_plot  # noqa: E402
+from grid2d import CELL_MM_MAX, CELL_MM_MIN, clamp_cell_mm, stats_table  # noqa: E402
 from lidar_session import MapParams, Session  # noqa: E402
 from lidar_stream import (EMPTY_PORT_HELP, SerialSource, SimulatedSource,  # noqa: E402
                           explain_serial_error, list_ports, port_label, pyserial_available,
                           rows_to_scan)
 from lidar_widgets import (BAD, BLUE, BLUE_SOFT, CHALK, HAIR, HAIR_STRONG, INK, MIST,  # noqa: E402
                            MUTED, OK, WARN, Fonts, ScrollFrame, Step, make_button, setup_ttk)
+from scanfilter import filter_isolated  # noqa: E402
 from segments import extract_segments  # noqa: E402
 
 STEPS = [("connect", "Connecter le lidar"), ("capture", "Capturer des scans"),
-         ("place", "Placer les scans"), ("maps", "Régler les cartes"), ("export", "Exporter")]
+         ("place", "Placer les scans"), ("maps", "Régler les cartes"),
+         ("grid", "Grille d'occupation 2D"), ("export", "Exporter")]
 OPTIONAL = {"maps"}
 BAUDS = ("115200", "230400", "921600")
 
 
 def plural(n, one, many):
     return f"{n} {one if n <= 1 else many}"
+
+
+def digits_only(text):
+    """Contrôle de saisie : seulement des chiffres (le champ peut être vide le temps de taper)."""
+    return text == "" or text.isdigit()
 
 
 def to_float(text, default=0.0):
@@ -70,6 +79,8 @@ class App(tk.Tk):
         self.source = None
         self.live = None
         self.live_segs = []
+        self.clean_var = tk.BooleanVar(value=True)      # ignorer les points isolés
+        self._live_used = None              # (scan brut, réglages, scan filtré) : évite de refiltrer à chaque dessin
         self.live_times = []
         self.last_live_draw = 0.0
         self.conn_state = "idle"            # idle | live | sim | error
@@ -79,10 +90,16 @@ class App(tk.Tk):
         self.queue_left = 0
         self.batch_pose = None
         self.sim_pose = (0.0, 0.0, 0.0)
-        self.flags = dict(connected_once=False, map_seen=False, posed=False, tuned=False, exported=False)
+        self.flags = dict(connected_once=False, map_seen=False, posed=False, tuned=False, exported=False,
+                          grid_seen=False)
         self.tab = "live"
         self.selected = -1
         self.map_view = None
+        self.grid_view = None               # cadrage de la grille 2D (None = ajusté au contenu)
+        self.grid_art = {}                  # éléments graphiques de la comparaison (pour le curseur)
+        self.last_pair = None
+        self.strength_job = None
+        self._grid_sync = False             # vrai pendant qu'on règle les curseurs par programme
         self.artists = {}
         self.drag = None
         self.rebuild_job = None
@@ -140,6 +157,7 @@ class App(tk.Tk):
         self._build_capture(self.steps["capture"].body)
         self._build_place(self.steps["place"].body)
         self._build_maps(self.steps["maps"].body)
+        self._build_grid(self.steps["grid"].body)
         self._build_export(self.steps["export"].body)
 
         right = tk.Frame(self, bg=MIST)
@@ -306,42 +324,79 @@ class App(tk.Tk):
         row.pack(fill="x")
         make_button(row, "Importer des fichiers", self.import_files, "default", f).pack(side="left")
         make_button(row, "Tout effacer", self.clear_all, "danger", f).pack(side="left", padx=6)
-        self.hint(body, "Dans l'onglet Carte, choisissez « Déplacer le scan choisi », puis faites glisser "
+        self.hint(body, "Dans l'onglet Carte, cochez « Glisser : le scan choisi », puis faites glisser "
                         "(Maj enfoncée : tourner). Flèches, « , » et « . » affinent la pose.").pack(fill="x", pady=(8, 0))
 
     # ---- étape 4 : cartes ----
     def _build_maps(self, body):
         f = self.fonts
-        self.res_var = tk.StringVar(value="0.05")
+        self.res_var = tk.StringVar(value="50")                 # taille des carreaux, en mm (entier)
         self.forget_var = tk.StringVar(value="1")
         self.ang_var = tk.StringVar(value="10")
         self.dist_var = tk.StringVar(value="0.06")
         self.gap_var = tk.StringVar(value="0.15")
         self.minw_var = tk.StringVar(value="1")
+        self.minpts_var = tk.StringVar(value="8")
+        self.minrange_var = tk.StringVar(value="0.20")
+        self.brk_var = tk.StringVar(value="0.10")
+        self.conf_tol_var = tk.StringVar(value="0.10")
+        self.confirm_var = tk.BooleanVar(value=False)
         g = tk.Frame(body, bg=CHALK)
         g.pack(fill="x")
-        specs = [("Cellule de la grille (m)", self.res_var), ("Oubli par scan", self.forget_var),
+        specs = [("Carreaux (mm, entier)", self.res_var),
+                 ("Oubli par scan", self.forget_var),
                  ("Écart d'angle (°)", self.ang_var), ("Écart latéral (m)", self.dist_var),
-                 ("Trou admis (m)", self.gap_var), ("Observations min.", self.minw_var)]
+                 ("Trou admis (m)", self.gap_var), ("Observations min.", self.minw_var),
+                 ("Points min. par groupe", self.minpts_var), ("Distance min. (m)", self.minrange_var),
+                 ("Écart de groupe (m)", self.brk_var), ("Confirmation (m)", self.conf_tol_var)]
         for i, (text, var) in enumerate(specs):
             def make(p, var=var, first=(i == 0)):
-                if first:
-                    cb = ttk.Combobox(p, textvariable=var, values=("0.03", "0.05", "0.10"), width=8)
-                    cb.bind("<<ComboboxSelected>>", lambda e: self.on_param_change())
-                    return cb
-                return ttk.Entry(p, textvariable=var, width=8)
+                return self.cell_entry(p, 8) if first else ttk.Entry(p, textvariable=var, width=8)
             w = self.field(g, text, make, i % 2, row=i // 2, pad=(0, 8 if i % 2 == 0 else 0))
-            w.bind("<Return>", lambda e: self.on_param_change())
-            w.bind("<FocusOut>", lambda e: self.on_param_change())
+            handler = self.on_cell_change if i == 0 else self.on_param_change
+            w.bind("<Return>", lambda e, h=handler: h())
+            w.bind("<FocusOut>", lambda e, h=handler: h())
+        ttk.Checkbutton(body, text="Exiger un 2e scan (confirmation)",
+                        variable=self.confirm_var, command=self.on_param_change).pack(anchor="w", pady=(10, 0))
         self.auto_build = tk.BooleanVar(value=True)
         ttk.Checkbutton(body, text="Recalculer à chaque changement", variable=self.auto_build).pack(anchor="w", pady=(10, 4))
         make_button(body, "Recalculer les cartes", self.rebuild, "default", f).pack(anchor="w")
         self.map_status = self.status_label(body)
         self.map_status.pack(fill="x", pady=(6, 0))
+        self.hint(body, "Filtre des points isolés (case « Ignorer les points isolés » au-dessus de la vue) : "
+                        "un groupe de points voisins plus petit que « Points min. » est ignoré, comme tout point "
+                        "plus proche que la distance min. Carreaux : entier de " f"{CELL_MM_MIN} à {CELL_MM_MAX} mm. "
+                        "La confirmation ne garde que les points revus par un autre scan (poses justes nécessaires). Les scans bruts sont conservés ; projet.json reste brut."
+                   ).pack(fill="x", pady=(0, 4))
         self.hint(body, "Cette étape est facultative : les valeurs par défaut fonctionnent pour une salle "
                         "de classe.").pack(fill="x")
 
-    # ---- étape 5 : export ----
+    # ---- étape 5 : grille d'occupation 2D ----
+    def cell_entry(self, parent, width=5):
+        """Champ « taille des carreaux » : un entier en millimètres (la même valeur partout)."""
+        return ttk.Entry(parent, textvariable=self.res_var, width=width, validate="key",
+                         validatecommand=(self.register(digits_only), "%P"))
+
+    def _build_grid(self, body):
+        f = self.fonts
+        make_button(body, "Ouvrir la grille 2D", lambda: self.set_tab("grid"), "primary", f).pack(anchor="w")
+        row = tk.Frame(body, bg=CHALK)
+        row.pack(fill="x", pady=(10, 0))
+        tk.Label(row, text="Carreaux (mm)", bg=CHALK, fg=MUTED, font=f.small).pack(side="left")
+        w = self.cell_entry(row, 6)
+        w.pack(side="left", padx=8)
+        w.bind("<Return>", lambda e: self.on_cell_change())
+        w.bind("<FocusOut>", lambda e: self.on_cell_change())
+        self.grid_stats_lbl = tk.Label(body, text="", bg=CHALK, fg=INK, anchor="w", justify="left",
+                                       font=f.mono)
+        self.grid_stats_lbl.pack(fill="x", pady=(10, 0))
+        make_button(body, "Enregistrer la comparaison (PNG)", self.export_grid_png, "default", f).pack(anchor="w", pady=8)
+        self.hint(body, "Deux grilles sur la même étendue : sans filtre à gauche, avec filtre à droite. Le curseur du "
+                        "bas déplace la séparation ; « Force du filtre » règle le nombre de points minimum d'un "
+                        "groupe (0 : filtre désactivé). Un bon filtre fait tomber les cellules isolées sans "
+                        "entamer les murs.").pack(fill="x")
+
+    # ---- étape 6 : export ----
     def _build_export(self, body):
         f = self.fonts
         make_button(body, "Tout exporter (.zip)", self.export_zip, "primary", f).pack(anchor="w")
@@ -362,8 +417,8 @@ class App(tk.Tk):
         seg = tk.Frame(bar, bg=MIST, highlightthickness=1, highlightbackground=HAIR_STRONG)
         seg.pack(side="left", padx=14, pady=9)
         self.tab_btns = {}
-        for key, text in (("live", "Direct"), ("map", "Carte")):
-            b = tk.Button(seg, text=text, font=f.bold, relief="flat", bd=0, padx=18, pady=6, cursor="hand2",
+        for key, text in (("live", "Direct"), ("map", "Carte"), ("grid", "Grille 2D")):
+            b = tk.Button(seg, text=text, font=f.bold, relief="flat", bd=0, padx=14, pady=6, cursor="hand2",
                           takefocus=0, command=lambda k=key: self.set_tab(k))
             b.pack(side="left", padx=2, pady=2)
             self.tab_btns[key] = b
@@ -382,9 +437,21 @@ class App(tk.Tk):
         for text, var in (("Points", self.lay_pts), ("Grille", self.lay_grid), ("Segments", self.lay_seg)):
             ttk.Checkbutton(self.map_opts, text=text, variable=var, command=self.redraw).pack(side="left", padx=6)
         tk.Frame(self.map_opts, bg=HAIR, width=1, height=22).pack(side="left", padx=10)
-        ttk.Radiobutton(self.map_opts, text="Déplacer la vue", variable=self.mode_var, value="view").pack(side="left", padx=6)
-        ttk.Radiobutton(self.map_opts, text="Déplacer le scan choisi", variable=self.mode_var, value="scan").pack(side="left", padx=6)
-        make_button(bar, "Ajuster la vue", self.fit_view, "default", f).pack(side="right", padx=14)
+        tk.Label(self.map_opts, text="Glisser :", font=f.small, bg=CHALK, fg=MUTED).pack(side="left", padx=(0, 0))
+        ttk.Radiobutton(self.map_opts, text="la vue", variable=self.mode_var, value="view").pack(side="left", padx=4)
+        ttk.Radiobutton(self.map_opts, text="le scan choisi", variable=self.mode_var, value="scan").pack(side="left", padx=6)
+        self.grid_opts = tk.Frame(bar, bg=CHALK)
+        self.grid_mode = tk.StringVar(value="cmp")
+        for text, value in (("Comparer", "cmp"), ("Sans filtre", "raw"), ("Avec filtre", "flt")):
+            ttk.Radiobutton(self.grid_opts, text=text, variable=self.grid_mode, value=value,
+                            command=self.on_grid_mode).pack(side="left", padx=5)
+        tk.Frame(self.grid_opts, bg=HAIR, width=1, height=22).pack(side="left", padx=10)
+        tk.Label(self.grid_opts, text="Carreaux (mm)", font=f.small, bg=CHALK, fg=MUTED).pack(side="left")
+        w = self.cell_entry(self.grid_opts, 5)
+        w.pack(side="left", padx=6)
+        w.bind("<Return>", lambda e: self.on_cell_change())
+        w.bind("<FocusOut>", lambda e: self.on_cell_change())
+        make_button(bar, "Ajuster", self.fit_view, "default", f).pack(side="right", padx=14)
 
     def _build_stage(self, parent):
         f = self.fonts
@@ -407,6 +474,36 @@ class App(tk.Tk):
                               padx=26, pady=20)
         self.toast = tk.Label(self.stage, text="", font=f.bold, bg=INK, fg=MIST, padx=16, pady=8)
         self.empty_key = ""
+        clean_box = tk.Frame(self.stage, bg=CHALK, highlightthickness=1, highlightbackground=HAIR)
+        ttk.Checkbutton(clean_box, text="Ignorer les points isolés", variable=self.clean_var,
+                        command=self.on_clean_toggle).pack(padx=8, pady=4)
+        clean_box.place(relx=1.0, x=-14, y=12, anchor="ne")
+        self._build_cmp_bar()
+
+    def _build_cmp_bar(self):
+        """Curseurs de la vue Grille 2D : séparation sans/avec filtre, et force du filtre."""
+        f = self.fonts
+        self.cmp_bar = tk.Frame(self.stage, bg=CHALK, highlightthickness=1, highlightbackground=HAIR)
+
+        def scale(parent, to, length, command):
+            return tk.Scale(parent, from_=0, to=to, orient="horizontal", showvalue=0, length=length, bd=0,
+                            bg=CHALK, troughcolor=MIST, highlightthickness=0, sliderlength=20, width=14,
+                            activebackground=BLUE, command=command)
+
+        self.wipe_row = tk.Frame(self.cmp_bar, bg=CHALK)
+        self.wipe_row.pack(fill="x", padx=12, pady=(8, 0))
+        tk.Label(self.wipe_row, text="Sans filtre", font=f.small, bg=CHALK, fg=MUTED).pack(side="left")
+        self.wipe = scale(self.wipe_row, 100, 280, self.on_wipe)
+        self.wipe.set(50)
+        self.wipe.pack(side="left", padx=8)
+        tk.Label(self.wipe_row, text="Avec filtre", font=f.small, bg=CHALK, fg=MUTED).pack(side="left")
+        row = self.strength_row = tk.Frame(self.cmp_bar, bg=CHALK)
+        row.pack(fill="x", padx=12, pady=(2, 8))
+        tk.Label(row, text="Force du filtre", font=f.small, bg=CHALK, fg=MUTED).pack(side="left")
+        self.strength = scale(row, 20, 200, self.on_strength)
+        self.strength.pack(side="left", padx=8)
+        self.strength_lbl = tk.Label(row, text="", font=f.small, bg=CHALK, fg=INK, width=30, anchor="w")
+        self.strength_lbl.pack(side="left")
 
     # ------------------------------------------------------------------
     # Chronologie
@@ -419,6 +516,7 @@ class App(tk.Tk):
             "capture": n > 0,
             "place": fl["map_seen"] and n > 0 and (fl["posed"] or n == 1),
             "maps": (fl["tuned"] or fl["exported"]) and n > 0,
+            "grid": fl["grid_seen"] and n > 0,
             "export": fl["exported"] and n > 0,
         }
 
@@ -441,8 +539,16 @@ class App(tk.Tk):
                       else "Alignez les scans sur la carte") if n else "Après la première capture",
             "maps": (f"{plural(len(sess.vmap.segments), 'segment', 'segments')} · grille "
                      f"{sess.grid.nx}×{sess.grid.ny}") if sess.vmap and sess.grid else "Valeurs par défaut",
+            "grid": self.grid_summary() if n else "Après la première capture",
             "export": "Export enregistré" if fl["exported"] else "Fichiers pour le TP",
         }
+
+    def grid_summary(self):
+        st = self.last_pair.stats if self.last_pair is not None and self.flags["grid_seen"] else None
+        if st is None:
+            return "Juger le filtre avec un curseur"
+        return (f"Occupées : de {st['raw']['occ']} à {st['flt']['occ']} · isolées : de {st['raw']['iso']} "
+                f"à {st['flt']['iso']}")
 
     def update_timeline(self):
         done, sums = self.step_done(), self.step_summaries()
@@ -481,15 +587,25 @@ class App(tk.Tk):
         self.led.create_oval(3, 3, 13, 13, fill=color, outline=color)
 
         sess = self.session
-        if self.tab == "live" and self.live is not None and len(self.live):
-            self.hud.configure(text=f"{len(self.live)} points     {hz:.1f} scans/s     "
-                                    f"{float(np.max(self.live.ranges)):.2f} m max")
+        shown = self.live_used() if self.tab == "live" else None
+        if shown is not None and len(self.live):
+            ignored = len(self.live) - len(shown)
+            parts = [f"{len(shown)} points"]
+            if self.clean_var.get():
+                parts.append(f"{ignored} ignorés")
+            parts.append(f"{hz:.1f} scans/s")
+            if len(shown):
+                parts.append(f"{float(np.max(shown.ranges)):.2f} m max")
+            self.hud.configure(text="     ".join(parts))
             self.hud.place(x=14, y=12)
         elif self.tab == "map" and sess.entries:
             vis = len(sess.visible())
             extra = (f"     {len(sess.vmap.segments)} segments     {sess.grid.nx}×{sess.grid.ny} cellules"
                      if sess.vmap and sess.grid else "")
             self.hud.configure(text=f"{plural(vis, 'scan', 'scans')}{extra}")
+            self.hud.place(x=14, y=12)
+        elif self.tab == "grid" and sess.entries:
+            self.hud.configure(text=self.grid_hud_text())
             self.hud.place(x=14, y=12)
         else:
             self.hud.place_forget()
@@ -499,7 +615,7 @@ class App(tk.Tk):
         key = ""
         if self.tab == "live" and self.live is None:
             key = "wait" if self.source and self.conn_state == "live" else "none"
-        elif self.tab == "map" and not self.session.entries:
+        elif self.tab in ("map", "grid") and not self.session.entries:
             key = "nomap"
         if key == self.empty_key:
             return
@@ -532,7 +648,7 @@ class App(tk.Tk):
 
     def show_toast(self, text):
         self.toast.configure(text=text)
-        self.toast.place(relx=0.5, rely=1.0, y=-34, anchor="s")
+        self.toast.place(relx=0.5, rely=1.0, y=-104 if self.tab == "grid" else -34, anchor="s")
         self.toast.lift()
         if self.toast_job:
             self.after_cancel(self.toast_job)
@@ -752,7 +868,7 @@ class App(tk.Tk):
             self.queue_left -= 1
         if not self.freeze.get():
             self.live = scan
-            self.live_segs = extract_segments(scan.points_local()) if self.opt_live_seg.get() else []
+            self.refresh_live_segs()
             if self.tab == "live" and now - self.last_live_draw > 0.08:
                 self.last_live_draw = now
                 self.redraw()
@@ -910,16 +1026,50 @@ class App(tk.Tk):
     # Cartes
     # ------------------------------------------------------------------
     def params(self):
-        return MapParams(resolution=max(0.01, to_float(self.res_var.get(), 0.05)),
+        return MapParams(resolution=clamp_cell_mm(self.res_var.get()) / 1000.0,
                          forget=min(1.0, max(0.5, to_float(self.forget_var.get(), 1.0))),
                          ang_tol_deg=to_float(self.ang_var.get(), 10.0),
                          dist_tol=to_float(self.dist_var.get(), 0.06),
                          gap_tol=to_float(self.gap_var.get(), 0.15),
-                         min_weight=to_float(self.minw_var.get(), 1.0))
+                         min_weight=to_float(self.minw_var.get(), 1.0),
+                         clean=self.clean_var.get(),
+                         min_points=max(1, int(to_float(self.minpts_var.get(), 8))),
+                         min_range=max(0.0, to_float(self.minrange_var.get(), 0.20)),
+                         break_min=max(0.02, to_float(self.brk_var.get(), 0.10)),
+                         confirm=self.confirm_var.get(),
+                         confirm_tol=max(0.02, to_float(self.conf_tol_var.get(), 0.10)))
+
+    def on_cell_change(self):
+        """Taille des carreaux saisie (mm, entier) : on la ramène à l'intervalle permis puis on recalcule."""
+        mm = clamp_cell_mm(self.res_var.get())
+        if self.res_var.get() != str(mm):
+            self.res_var.set(str(mm))
+        self.on_param_change()
 
     def on_param_change(self):
         self.flags["tuned"] = True
+        self.on_clean_toggle()
+
+    def on_clean_toggle(self):
+        """Filtre activé, désactivé ou réglé : on recalcule les cartes et on redessine aussi la vue directe."""
+        self.refresh_live_segs()
         self.rebuild()
+        self.redraw()
+
+    def live_used(self):
+        """Le scan de la vue directe, filtré si la case est cochée (mis en cache tant que rien ne change)."""
+        if self.live is None or not self.clean_var.get():
+            return self.live
+        fp = self.params().filter()
+        cached = self._live_used
+        if cached is None or cached[0] is not self.live or cached[1] != fp:
+            cached = (self.live, fp, filter_isolated(self.live, **fp.kwargs()))
+            self._live_used = cached
+        return cached[2]
+
+    def refresh_live_segs(self):
+        shown = self.live_used()
+        self.live_segs = extract_segments(shown.points_local()) if shown is not None and self.opt_live_seg.get() else []
 
     def schedule_rebuild(self):
         if not self.auto_build.get():
@@ -938,7 +1088,7 @@ class App(tk.Tk):
         self.set_status(self.map_status, self.session.map_info, "ok" if self.session.map_info else "")
         self.update_chrome()
         self.update_timeline()
-        if self.tab == "map":
+        if self.tab in ("map", "grid"):
             self.redraw()
 
     # ------------------------------------------------------------------
@@ -950,11 +1100,19 @@ class App(tk.Tk):
             on = key == tab
             b.configure(bg=BLUE if on else MIST, fg="#ffffff" if on else MUTED,
                         activebackground=BLUE if on else BLUE_SOFT, activeforeground="#ffffff" if on else BLUE)
+        for frame in (self.live_opts, self.map_opts, self.grid_opts):
+            frame.pack_forget()
+        self.cmp_bar.place_forget()
         if tab == "live":
-            self.map_opts.pack_forget()
             self.live_opts.pack(side="left")
+        elif tab == "grid":
+            self.grid_opts.pack(side="left")
+            if self.session.entries:
+                self.flags["grid_seen"] = True
+            self.grid_view = None
+            self.sync_grid_controls()
+            self.cmp_bar.place(x=14, rely=1.0, y=-12, anchor="sw")
         else:
-            self.live_opts.pack_forget()
             self.map_opts.pack(side="left")
             if self.session.entries:
                 self.flags["map_seen"] = True
@@ -969,16 +1127,29 @@ class App(tk.Tk):
         self.update_timeline()
 
     def remember_view(self):
-        if self.tab == "map":
+        if self.tab in ("map", "grid"):
             self.ax.apply_aspect()
-            self.map_view = (*self.ax.get_xlim(), *self.ax.get_ylim())
+            view = (*self.ax.get_xlim(), *self.ax.get_ylim())
+            if self.tab == "map":
+                self.map_view = view
+            else:
+                self.grid_view = view
 
     def redraw(self):
         if not hasattr(self, "ax"):
             return
         if self.tab == "live":
-            lidar_plot.draw_live(self.ax, self.live, self.live_segs if self.opt_live_seg.get() else None,
+            lidar_plot.draw_live(self.ax, self.live_used(), self.live_segs if self.opt_live_seg.get() else None,
                                  self.opt_intensity.get())
+        elif self.tab == "grid":
+            pair = self.current_pair()
+            self.last_pair = pair
+            self.grid_art = lidar_plot.draw_grid(self.ax, self.session, pair, self.grid_mode.get(),
+                                                 self.wipe.get() / 100.0, self.grid_view, self.selected)
+            self.remember_view()
+            self.sync_grid_controls()
+            self.render_grid_stats()
+            self.update_timeline()
         else:
             self.artists = lidar_plot.draw_map(self.ax, self.session, self.selected, self.lay_pts.get(),
                                                self.lay_grid.get(), self.lay_seg.get(), self.map_view)
@@ -987,18 +1158,93 @@ class App(tk.Tk):
 
     def fit_view(self):
         self.map_view = None
+        self.grid_view = None
+        self.redraw()
+
+    # ---- grille 2D ----
+    def current_pair(self):
+        """Les deux grilles (sans / avec filtre) pour les réglages actuels ; None s'il n'y a aucun scan."""
+        if not self.session.entries:
+            return None
+        params = self.params()
+        self.session.filter = params.filter()
+        return self.session.grid_pair(clamp_cell_mm(self.res_var.get()), params.forget)
+
+    def grid_hud_text(self):
+        pair = self.last_pair or self.current_pair()
+        if pair is None:
+            return ""
+        st = pair.stats
+        pct = round(100 * st["ignored"] / st["total"]) if st["total"] else 0
+        size = f"Carreaux de {pair.cell_mm} mm · grille {pair.raw.nx}×{pair.raw.ny}"
+        if pair.capped:
+            size += " (zone très étendue : carreaux agrandis)"
+        filt = (f"{st['ignored']} points ignorés ({pct} %)" if self.clean_var.get() else "filtre désactivé")
+        return (f"{size}\nSans filtre : {st['raw']['occ']} occupées, dont {st['raw']['iso']} isolées\n"
+                f"Avec filtre : {st['flt']['occ']} occupées, dont {st['flt']['iso']} isolées · {filt}")
+
+    def render_grid_stats(self):
+        pair = self.last_pair
+        self.grid_stats_lbl.configure(text=stats_table(pair.stats) if pair is not None else "")
+        self.hud.configure(text=self.grid_hud_text())
+        if pair is not None:
+            self.hud.place(x=14, y=12)
+
+    def sync_grid_controls(self):
+        """Cale le curseur « force du filtre » sur la case et le champ « Points min. » (sans déclencher de calcul)."""
+        n = int(to_float(self.minpts_var.get(), 8)) if self.clean_var.get() else 0
+        self._grid_sync = True
+        try:
+            self.strength.set(max(0, min(20, n)))
+        finally:
+            self._grid_sync = False
+        self.strength_lbl.configure(text=f"groupes de {n} points min." if n else "désactivé (aucun point ignoré)")
+        if self.grid_mode.get() == "cmp":
+            self.wipe_row.pack(fill="x", padx=12, pady=(8, 0), before=self.strength_row)
+        else:
+            self.wipe_row.pack_forget()
+
+    def on_grid_mode(self):
+        self.sync_grid_controls()
+        self.redraw()
+
+    def apply_wipe(self):
+        lidar_plot.move_wipe(self.grid_art, self.wipe.get() / 100.0)
+
+    def on_wipe(self, _value):
+        if self.tab == "grid" and self.grid_art:
+            self.apply_wipe()
+            self.canvas.draw_idle()
+
+    def on_strength(self, value):
+        """Curseur « force du filtre » : 0 = désactivé, sinon c'est le nombre de points minimum d'un groupe."""
+        if self._grid_sync:
+            return
+        n = int(float(value))
+        self.strength_lbl.configure(text=f"groupes de {n} points min." if n else "désactivé (aucun point ignoré)")
+        self.clean_var.set(n > 0)
+        if n > 0:
+            self.minpts_var.set(str(n))
+        self.flags["tuned"] = True
+        if self.strength_job:
+            self.after_cancel(self.strength_job)
+        self.strength_job = self.after(120, self.apply_strength)       # on attend que la main se stabilise
+
+    def apply_strength(self):
+        self.strength_job = None
+        self.refresh_live_segs()
+        self.rebuild()
         self.redraw()
 
     def on_live_option(self):
-        if self.live is not None:
-            self.live_segs = extract_segments(self.live.points_local()) if self.opt_live_seg.get() else []
+        self.refresh_live_segs()
         self.redraw()
 
     def on_press(self, ev):
-        if self.tab != "map" or ev.inaxes is not self.ax or ev.button != 1:
+        if self.tab not in ("map", "grid") or ev.inaxes is not self.ax or ev.button != 1:
             return
         sel = self.selected_entry()
-        if self.mode_var.get() == "scan" and sel is not None:
+        if self.tab == "map" and self.mode_var.get() == "scan" and sel is not None:
             self.drag = dict(kind="scan", pose0=list(sel.pose), x0=ev.xdata, y0=ev.ydata)
         else:
             self.drag = dict(kind="pan", inv=self.ax.transData.inverted(), px=(ev.x, ev.y),
@@ -1016,6 +1262,8 @@ class App(tk.Tk):
             dx, dy = p0[0] - p1[0], p0[1] - p1[1]
             self.ax.set_xlim(d["xlim"][0] + dx, d["xlim"][1] + dx)
             self.ax.set_ylim(d["ylim"][0] + dy, d["ylim"][1] + dy)
+            if self.tab == "grid":
+                self.apply_wipe()                           # la séparation garde sa place à l'écran
             self.canvas.draw_idle()
             return
         sel = self.selected_entry()
@@ -1031,7 +1279,7 @@ class App(tk.Tk):
         else:
             sel.pose[0] = x0 + (ev.xdata - d["x0"])
             sel.pose[1] = y0 + (ev.ydata - d["y0"])
-        lidar_plot.move_scan_artists(self.artists, sel)
+        lidar_plot.move_scan_artists(self.artists, sel, self.session.filter)
         self.canvas.draw_idle()
         self.refresh_pose_entries()
         self.touch_pose()
@@ -1043,13 +1291,15 @@ class App(tk.Tk):
         self.drag = None
 
     def on_scroll(self, ev):
-        if self.tab != "map" or ev.inaxes is not self.ax:
+        if self.tab not in ("map", "grid") or ev.inaxes is not self.ax:
             return
         factor = 0.85 if ev.button == "up" else 1 / 0.85
         xl, yl = self.ax.get_xlim(), self.ax.get_ylim()
         self.ax.set_xlim(ev.xdata + (xl[0] - ev.xdata) * factor, ev.xdata + (xl[1] - ev.xdata) * factor)
         self.ax.set_ylim(ev.ydata + (yl[0] - ev.ydata) * factor, ev.ydata + (yl[1] - ev.ydata) * factor)
         self.remember_view()
+        if self.tab == "grid":
+            self.apply_wipe()
         self.canvas.draw_idle()
 
     def selected_entry(self):
@@ -1110,7 +1360,8 @@ class App(tk.Tk):
             return
         self.session.clear()
         self.selected = -1
-        self.flags.update(map_seen=False, posed=False, tuned=False, exported=False)
+        self.flags.update(map_seen=False, posed=False, tuned=False, exported=False, grid_seen=False)
+        self.last_pair = None
         self.set_status(self.cap_status, "")
         self.set_status(self.map_status, "")
         self.render_scan_list()
@@ -1130,13 +1381,33 @@ class App(tk.Tk):
         self.show_toast(text)
         self.update_timeline()
 
+    def grid_extra(self):
+        """Fichiers ajoutés à l'export quand la grille 2D a été consultée : image de comparaison et chiffres."""
+        pair = self.current_pair() if self.flags["grid_seen"] else None
+        if pair is None:
+            return {}
+        text = (f"Carreaux : {pair.cell_mm} mm, {len(self.session.visible())} scan(s)\n"
+                f"Filtre : {self.session.filter}\n\n{stats_table(pair.stats)}\n")
+        return {"grille2d_comparaison.png": lidar_plot.render_comparison_png(self.session, pair),
+                "grille2d_stats.txt": text.encode("utf-8")}
+
+    def export_grid_png(self):
+        if not self.need_scans():
+            return
+        pair = self.current_pair()
+        path = filedialog.asksaveasfilename(title="Comparaison de la grille 2D", defaultextension=".png",
+                                            initialfile="grille2d_comparaison.png", filetypes=[("Image PNG", "*.png")])
+        if path and pair is not None:
+            Path(path).write_bytes(lidar_plot.render_comparison_png(self.session, pair))
+            self.show_toast(f"Comparaison enregistrée : {Path(path).name}")
+
     def export_zip(self):
         if not self.need_scans():
             return
         path = filedialog.asksaveasfilename(title="Exporter le relevé", defaultextension=".zip",
                                             initialfile="lidar_export.zip", filetypes=[("Archive zip", "*.zip")])
         if path:
-            self.session.export_zip(path, lidar_plot.render_map_png(self.session, self.selected))
+            self.session.export_zip(path, lidar_plot.render_map_png(self.session, self.selected), self.grid_extra())
             self.mark_exported(f"Export : {plural(len(self.session.entries), 'scan', 'scans')} dans {Path(path).name}")
 
     def export_folder(self):
@@ -1144,7 +1415,8 @@ class App(tk.Tk):
             return
         folder = filedialog.askdirectory(title="Dossier de destination", mustexist=False)
         if folder:
-            self.session.export_folder(folder, lidar_plot.render_map_png(self.session, self.selected))
+            self.session.export_folder(folder, lidar_plot.render_map_png(self.session, self.selected),
+                                       self.grid_extra())
             self.mark_exported(f"Export écrit dans {Path(folder).name}")
 
     def export_vec(self):

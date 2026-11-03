@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.widgets import Button, RadioButtons, Slider
 
-from lidar_io import load_poses, load_scan_folder, load_scans, save_poses
+from lidar_io import load_poses, load_scan_folder, load_scans, poses_for, save_poses
 
 COLORS = ["tab:blue", "tab:red", "tab:green", "tab:orange", "tab:purple",
           "tab:brown", "tab:pink", "tab:olive", "tab:cyan", "tab:gray"]
@@ -206,10 +206,13 @@ def main():
         sys.exit("Aucun scan valide trouvé.")
     print(f"{len(scans)} scan(s) chargé(s) : {[s.name for s in scans]}")
 
-    poses = {}
+    from_file = None
     if Path(args.poses).exists():
-        poses = load_poses(args.poses)
+        from_file = load_poses(args.poses)
         print(f"Poses lues dans {args.poses}")
+    poses = poses_for(scans, from_file)          # sinon : position écrite en tête de chaque .csv
+    if len(poses) and from_file is None:
+        print(f"Positions relues dans les fichiers .csv pour {len(poses)} scan(s)")
 
     viewer = ScanViewer(scans, poses, args.poses)
     plt.show()

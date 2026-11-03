@@ -162,6 +162,61 @@ Un segment vu une seule fois a un poids de 1 (utiliser `--min-weight 2` pour fil
 Les croisements fusionnés à tort avec un objet mobile ne sont pas gérés (pas de durée de vie des segments).
 **[À COMPLÉTER]** carte vectorielle de ta salle, paramètres retenus, comparaison avec la grille.
 
+## 6. Filtre des points isolés
+
+Les relevés réels contiennent des points parasites (reflets, poussière, corps du robot, personnes qui passent).
+Sur la carte ils dessinent des « rayons » de points isolés autour des positions du robot. Le filtre
+(`scanfilter.py`, repris à l'identique dans `lidar_web.html`) travaille sur chaque scan avant la grille et les segments :
+
+1. les points plus proches que 0,20 m du capteur sont retirés ;
+2. chaque point (balayage trié par angle, circulaire) est relié à ses 2 voisins suivants si l'écart ne dépasse pas
+   `max(0,10 m ; 4 × r_min × k × Δθ)` (r_min : la plus petite des deux distances, k : nombre de pas, Δθ : pas angulaire médian) ;
+3. un groupe de moins de 8 points est supprimé ;
+4. (option) confirmation : un point n'est gardé que si un autre scan voit un point à moins de 0,10 m, dans le repère de la carte.
+   Cela retire aussi ce qui n'est vu qu'une fois (personne qui passe), mais demande des poses justes et efface les zones
+   vues par un seul scan.
+
+Relier à 2 voisins (et non 1) évite qu'un parasite glissé au milieu d'un mur le coupe en deux.
+Les scans bruts restent en mémoire (`projet.json` est brut) ; les `scans/*.csv` exportés sont filtrés.
+
+Essai sur la salle simulée avec bruit ajouté (30 scans, parasites isolés et collés au capteur) : environ 90 % des
+parasites isolés et 100 % des points collés ou en petit groupe sont retirés, pour 0,7 % de vrais points perdus
+(petits obstacles de moins de 8 points : environ 1,8 % avec les valeurs par défaut actuelles). **[À COMPLÉTER]** effet sur tes 11 scans : nombre de points ignorés
+(affiché dans l'étape 4), segments avant/après.
+Limite : une personne qui bouge près du robot forme un vrai groupe de points et n'est pas retirée par le filtre seul
+(seule la confirmation par un 2e scan la retire).
+
+### Grille d'occupation 2D sans / avec filtre
+
+Pour juger le filtre, deux grilles sont construites sur la même étendue (`grid2d.py`, `grid2d_tool.py`, onglet « Grille 2D »
+de l'application et de la page web) : l'une avec tous les points mesurés, l'autre avec les points gardés. Une cellule est
+*isolée* si aucune de ses 8 voisines n'est occupée. Un bon filtre fait tomber les cellules isolées sans réduire beaucoup les
+cellules occupées (les murs). Les carreaux se règlent en millimètres (entier, 10 à 500).
+
+Exemple sur la salle simulée avec bruit ajouté (4 scans, carreaux de 50 mm, valeurs par défaut du filtre) :
+
+| | Sans filtre | Avec filtre |
+| --- | --- | --- |
+| Cellules occupées | 742 | 582 |
+| dont isolées | 155 | 9 |
+| Points ignorés | 0 | 376 (21 %) |
+
+Effet de « points min. » sur le même relevé :
+
+| Points min. | Occupées | Isolées | Points ignorés |
+| --- | --- | --- | --- |
+| 1 | 740 | 153 | 7 |
+| 4 | 583 | 8 | 340 |
+| 8 | 582 | 9 | 376 |
+| 12 | 561 | 10 | 465 |
+| (sans filtre) | 742 | 155 | 0 |
+
+Au-delà de 8, on perd des cellules de murs sans retirer plus de cellules isolées : 8 est un bon compromis ici.
+Image : `exemples_synthetiques/grille2d_comparaison.png`. Limite : si les carreaux sont plus petits que l'espacement des
+points (2 à 4 cm à 3 m), les murs deviennent pointillés et les cellules « isolées » augmentent (sur le relevé simulé : 68 à 20 mm,
+502 à 10 mm), ce qui n'est plus un défaut du filtre. **[À COMPLÉTER]** mêmes tableaux sur tes scans réels
+(`python grid2d_tool.py scans --poses poses.json --sweep-points 1,4,8,12`) et ta conclusion.
+
 ## Paramètres à régler sur ta salle
 
 | Paramètre | Où | Défaut | Si ça ne marche pas |
@@ -172,3 +227,8 @@ Les croisements fusionnés à tort avec un objet mobile ne sont pas gérés (pas
 | `split_dist` | `extract_segments` | 0,03 m | trop de petits segments → 0,05 m |
 | `ang_tol`, `dist_tol`, `gap_tol` | `VectorMap` | 10° / 6 cm / 15 cm | murs dédoublés → augmenter `dist_tol` |
 | `--min-weight` | `vectormap_tool` | 1 | segments parasites → 2 |
+| `min_points` | filtre des points isolés | 8 | parasites restants → 10 à 12 ; petits objets effacés → 4 à 5 |
+| `min_range` | filtre des points isolés | 0,20 m | points collés au robot → 0,30 m ; obstacle proche effacé → 0,10 m |
+| `break_min` | filtre des points isolés | 0,10 m | murs coupés en morceaux → 0,15 m |
+| `--cell-mm` | `grid2d_tool`, onglet Grille 2D | 50 mm | murs pointillés → 80 à 100 mm ; trop grossier → 25 à 30 mm |
+
