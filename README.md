@@ -22,8 +22,8 @@ intégrée à une application, pas Firefox ni Safari : ils n'ont pas l'accès s�
 La colonne de gauche est une **chronologie en 7 étapes**. L'étape en cours est jaune et ouverte, les étapes
 terminées passent en bleu avec une coche, les suivantes restent grisées. Chaque étape se replie ou se déplie d'un clic.
 
-1. **Connecter le lidar** (USB de l'ESP32, moniteur série d'Arduino fermé). L'image s'affiche en direct.
-   Marche avec le sketch tel quel (`printScanTeleplot`) ou avec `printScanCSV` (recommandé, plus fiable).
+1. **Connecter le lidar** : en **USB** (moniteur série d'Arduino fermé) ou en **Wi-Fi** (voir plus bas). L'image s'affiche en direct.
+   En USB, marche avec le sketch tel quel (`printScanTeleplot`) ou avec `printScanCSV` (recommandé, plus fiable).
 2. **Capturer des scans** : indiquer la position du robot, puis Capturer (bouton ou Espace). Deux façons de la donner :
    *depuis l'origine* (x, y, θ dans le repère du premier scan) ou *depuis le scan précédent* (avant, gauche, rotation
    mesurés dans le repère du robot au scan précédent ; la page calcule la position absolue).
@@ -83,6 +83,18 @@ Une fois connecté, « Données reçues » (étape 1) montre les derniers octets
 bonne vitesse ; des caractères étranges = mauvaise vitesse ; rien = le sketch n'envoie pas (bouton EN de la carte).
 Les réglages « Décalage » et « Miroir » corrigent le montage du capteur.
 
+### Connexion Wi-Fi (v14)
+
+L'ESP32 crée son propre réseau (point d'accès). Sur l'ordinateur : se connecter à ce réseau (il perd alors internet), ouvrir
+`lidar_web.html` **depuis le fichier** (une page https bloque `ws://`), puis **Connecter en Wi-Fi**. L'adresse par défaut est
+`192.168.4.1` (port 81 du WebSocket ajouté tout seul) ; elle est mémorisée par le navigateur. Si Chrome demande l'autorisation
+d'accéder au réseau local, l'accepter.
+
+Un message WebSocket = un tour complet. Formats lus : JSON `[{"a":angle°,"d":distance mm,"i":intensité}, ...]`
+(l'intensité `i` est facultative ; une virgule en trop avant `]` est tolérée) ou texte CSV / Teleplot comme en USB.
+Au moins 50 points par tour. Si la liaison tombe, la page retente 10 fois toutes les 2 s. Sans `i`, tous les points ont
+l'intensité 255 : le filtre d'intensité n'a alors rien à filtrer. Le mot de passe du réseau n'est jamais demandé ni stocké.
+
 ### Jour 2 : localisation (onglet Localisation de `lidar_web.html`)
 
 Le but : retrouver la pose (x, y, θ) d'un scan, de trois façons, et **comparer les méthodes avec les mêmes conditions initiales**.
@@ -135,7 +147,7 @@ Tests du noyau (Node) : `node tests/web_loc_test.js lidar_web.html` (150 vérifi
 | `lidar_web.html` | la page : lidar en direct, capture, poses, grille, segments, filtre, localisation, recalage, export .zip |
 | `data_synth/` | 4 scans simulés et leurs vraies poses, pour essayer sans robot |
 | `exemples_synthetiques/` | images obtenues sur les données simulées (pas des données réelles) |
-| `tests/` | tests du noyau de calcul de la page (Node) |
+| `tests/` | tests du noyau de calcul de la page (Node), dont la lecture des messages Wi-Fi |
 | `RAPPORT_Jour1.md` | compte rendu (parties à compléter avec les résultats réels) |
 
 ## Tests
@@ -146,7 +158,7 @@ Les tests chargent le noyau de calcul directement depuis `lidar_web.html`. Il fa
 node tests/run_all.js
 ```
 
-Ils vérifient la géométrie des segments, la chaîne scans → grille et carte vectorielle, les 14 méthodes de localisation et le recalage automatique.
+Ils vérifient la géométrie des segments, la chaîne scans → grille et carte vectorielle, les 14 méthodes de localisation, le recalage automatique et la lecture des messages Wi-Fi.
 
 ## Git
 

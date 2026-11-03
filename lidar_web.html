@@ -314,18 +314,27 @@
         </button></h2>
         <div class="body" id="b-connect"><div class="inner"><div class="pad">
           <div class="row">
-            <button id="btnConnect" class="btn primary" type="button">Connecter le lidar</button>
+            <button id="btnConnect" class="btn primary" type="button">Connecter en USB</button>
+            <button id="btnConnectWifi" class="btn primary" type="button">Connecter en Wi-Fi</button>
             <button id="btnDisconnect" class="btn" type="button" disabled>Déconnecter</button>
             <button id="btnSim" class="btn" type="button">Simulation</button>
           </div>
-          <div class="field" style="max-width:160px">
-            <label for="baud">Vitesse (bauds)</label>
-            <select id="baud"><option>115200</option><option>230400</option><option>921600</option></select>
+          <div class="row">
+            <div class="field" style="width:150px">
+              <label for="baud">USB : vitesse (bauds)</label>
+              <select id="baud"><option>115200</option><option>230400</option><option>921600</option></select>
+            </div>
+            <div class="field" style="width:190px">
+              <label for="wsAddr">Wi-Fi : adresse de l'ESP32</label>
+              <input type="text" id="wsAddr" value="192.168.4.1" spellcheck="false" autocomplete="off" inputmode="url">
+            </div>
           </div>
           <div class="status" id="connStatus" aria-live="polite"></div>
           <div id="connHelp" hidden><button class="btn sm" id="btnDiagInline" type="button">Ouvrir le diagnostic</button></div>
-          <p class="hint">Fermez le moniteur série d'Arduino avant de connecter. Le sketch doit appeler
-            <code>printScanCSV</code> (conseillé) ou <code>printScanTeleplot</code>.</p>
+          <p class="hint"><b>USB</b> : fermez le moniteur série d'Arduino avant de connecter. Le sketch doit appeler
+            <code>printScanCSV</code> (conseillé) ou <code>printScanTeleplot</code>.<br>
+            <b>Wi-Fi</b> : connectez d'abord l'ordinateur au réseau de l'ESP32 (il perd alors internet), puis
+            « Connecter en Wi-Fi ». Ouvrez la page depuis le fichier <code>lidar_web.html</code>, pas depuis un site https.</p>
           <details class="sub" id="monBox"><summary>Données reçues</summary>
             <div class="subbody">
               <pre class="mon" id="mon">Rien reçu pour l'instant.</pre>
@@ -911,6 +920,47 @@ class LidarParser {
     }
     if (rows.length >= 50) this.onScan(rows);
   }
+}
+
+/* ---------- liaison Wi-Fi (WebSocket vers l'ESP32) ---------- */
+/* Adresse saisie -> url ws://. Accepte 192.168.4.1, 192.168.4.1:81, ws://192.168.4.1:81/ ou http://192.168.4.1/
+   (port 81 par défaut : celui du sketch). Renvoie null si l'adresse est inutilisable. */
+function wsUrlOf(input) {
+  let s = String(input == null ? '' : input).trim();
+  s = s.replace(/^(?:https?|wss?):\/\//i, '').replace(/[/?#].*$/, '');
+  if (s === '') return null;
+  if (!/:\d+$/.test(s)) s += ':81';
+  if (!/^[A-Za-z0-9.-]+:\d{1,5}$/.test(s)) return null;
+  if (Number(s.slice(s.lastIndexOf(':') + 1)) > 65535) return null;
+  return 'ws://' + s + '/';
+}
+/* Un message = un tour complet. Formats lus :
+   - JSON [{"a":angle°,"d":distance mm,"i":intensité (facultative)}, ...]   (sketch Wi-Fi)
+     (aussi {"points":[...]}, [[a,d,i],...], noms longs angle / distance / intensity)
+   - texte CSV ou Teleplot : renvoyé tel quel (kind 'texte') pour LidarParser.
+   Le JSON avec une virgule en trop avant ] ou } est accepté (bug courant du sketch). */
+function parseWsMessage(text) {
+  const t = String(text).trim();
+  if (t === '') return { kind: 'vide', rows: [] };
+  if (t[0] !== '[' && t[0] !== '{') return { kind: 'texte', rows: [] };
+  let data;
+  try { data = JSON.parse(t); }
+  catch (e1) {
+    try { data = JSON.parse(t.replace(/,\s*([\]}])/g, '$1')); }
+    catch (e2) { return { kind: 'invalide', rows: [], error: e1.message }; }
+  }
+  if (data && !Array.isArray(data)) data = Array.isArray(data.points) ? data.points : Array.isArray(data.scan) ? data.scan : [data];
+  const rows = [];
+  for (const p of data) {
+    let a, d, q;
+    if (Array.isArray(p)) { a = p[0]; d = p[1]; q = p[2]; }
+    else if (p && typeof p === 'object') { a = p.a ?? p.angle; d = p.d ?? p.dist ?? p.distance ?? p.r; q = p.i ?? p.q ?? p.intensity; }
+    else continue;
+    a = Number(a); d = Number(d); q = q == null ? 255 : Number(q);
+    if (!isFinite(a) || !isFinite(d) || d <= 0) continue;
+    rows.push([mod360(a), d, isFinite(q) ? q : 255]);
+  }
+  return { kind: 'json', rows };
 }
 
 /* ---------- import de fichiers (formats ESP32, maison, RobotControl, MapTool) ---------- */
@@ -2174,10 +2224,10 @@ function stepDone() {
 }
 function stepSummaries() {
   const n = state.scans.length;
-  const conn = state.connState === 'live' ? (state.gotScan ? `${state.portLabel || 'Port série'} · ${$('baud').value} bauds` : 'Connecté, en attente de données')
+  const conn = state.connState === 'live' ? (state.gotScan ? (state.ws ? state.portLabel : `${state.portLabel || 'Port série'} · ${$('baud').value} bauds`) : 'Connecté, en attente de données')
     : state.connState === 'sim' ? 'Simulation en cours'
     : n > 0 ? 'Données importées ou déjà reçues'
-    : 'Branchez l’ESP32 en USB';
+    : 'Branchez l’ESP32 en USB ou connectez-vous à son Wi-Fi';
   return {
     connect: conn,
     capture: n ? plural(n, 'scan capturé', 'scans capturés') : 'Le robot reste immobile',
@@ -2257,8 +2307,11 @@ function explainSerialError(e, phase) {
   return { text: 'Connexion impossible : ' + msg, kind: 'err', pill: 'error' };
 }
 
+const isLinked = () => !!(state.port || state.ws);     // USB ou Wi-Fi
+
 async function connect() {
   clearTimers();
+  if (isLinked()) return;
   if (!hasSerial()) {
     setConn('error');
     setStatus('connStatus', 'Ce navigateur ne gère pas l’accès série. Ouvrez la page dans Chrome ou Edge.', 'err');
@@ -2283,7 +2336,7 @@ async function connect() {
   state.port = port; state.stop = false; state.portLabel = portLabelOf(port);
   state.bytes = 0; state.gotScan = false; state.monText = ''; state.monDirty = true; state.live = null;
   parser.rows = []; parser.buf = ''; parser.lastAng = null;
-  $('btnConnect').disabled = true; $('btnDisconnect').disabled = false;
+  $('btnConnect').disabled = true; $('btnConnectWifi').disabled = true; $('btnDisconnect').disabled = false;
   setStatus('connStatus', 'Connecté. Attente du premier tour complet…', 'ok');
   setConn('live');
   toast('Lidar connecté');
@@ -2294,13 +2347,17 @@ function clearTimers() { state.timers.forEach(clearTimeout); state.timers = []; 
 function startWatchdogs() {
   clearTimers();
   state.timers.push(setTimeout(() => {
-    if (!state.port || state.bytes > 0) return;
-    setStatus('connStatus', 'Connecté, mais aucun octet reçu après 4 s. Appuyez sur le bouton EN de la carte, ou vérifiez que le sketch envoie les données (printScanCSV).', 'warn');
+    if (!isLinked() || state.bytes > 0) return;
+    setStatus('connStatus', state.ws
+      ? 'Connecté à l’ESP32, mais aucun message reçu après 4 s. Le lidar tourne-t-il ? Vérifiez son alimentation et le fil de données (GPIO 33).'
+      : 'Connecté, mais aucun octet reçu après 4 s. Appuyez sur le bouton EN de la carte, ou vérifiez que le sketch envoie les données (printScanCSV).', 'warn');
     $('monBox').open = true; showHelp();
   }, 4000));
   state.timers.push(setTimeout(() => {
-    if (!state.port || state.gotScan || state.bytes === 0) return;
-    setStatus('connStatus', 'Des octets arrivent, mais aucun tour complet n’est reconnu. Vérifiez la vitesse (115200 pour le sketch fourni) et le format : printScanCSV ou printScanTeleplot.', 'warn');
+    if (!isLinked() || state.gotScan || state.bytes === 0) return;
+    setStatus('connStatus', state.ws
+      ? 'Des messages arrivent, mais aucun tour complet n’est reconnu (au moins 50 points par tour, en JSON {a,d} ou en CSV). Ouvrez « Données reçues ».'
+      : 'Des octets arrivent, mais aucun tour complet n’est reconnu. Vérifiez la vitesse (115200 pour le sketch fourni) et le format : printScanCSV ou printScanTeleplot.', 'warn');
     $('monBox').open = true;
   }, 8000));
 }
@@ -2334,7 +2391,7 @@ async function closePort() {
   const p = state.port;
   state.port = null; clearTimers();
   try { if (p) await p.close(); } catch (_) { /* déjà fermé */ }
-  $('btnConnect').disabled = false; $('btnDisconnect').disabled = true;
+  $('btnConnect').disabled = false; $('btnConnectWifi').disabled = false; $('btnDisconnect').disabled = true;
   const wasError = state.connState === 'error';
   if (!wasError && !state.simTimer) {
     if (!/err|warn/.test($('connStatus').className)) setStatus('connStatus', 'Déconnecté.');
@@ -2344,8 +2401,87 @@ async function closePort() {
 }
 async function disconnect() {
   state.stop = true;
+  if (state.ws) { const w = state.ws; wsEnd('Déconnecté.', 'idle'); try { w.close(); } catch (_) { /* déjà fermé */ } return; }
   try { if (state.reader) await state.reader.cancel(); } catch (_) { /* ignoré */ }
   if (state.readLoopPromise) await state.readLoopPromise;
+}
+
+/* ---------- liaison Wi-Fi : WebSocket vers l'ESP32 (un message = un tour) ---------- */
+state.ws = null; state.wsRetry = null; state.wsBad = 0;
+const WS_RETRIES = 10;
+const wsDecoder = new TextDecoder();
+try { const saved = localStorage.getItem('lidarWsAddr'); if (saved) $('wsAddr').value = saved; } catch (_) { /* stockage indisponible */ }
+
+function wsEnd(msg, kind) {
+  clearTimeout(state.wsRetry); state.wsRetry = null;
+  state.ws = null; clearTimers();
+  $('btnConnect').disabled = false; $('btnConnectWifi').disabled = false; $('btnDisconnect').disabled = true;
+  setStatus('connStatus', msg, kind === 'error' ? 'err' : '');
+  setConn(kind === 'error' ? 'error' : 'idle');
+}
+function connectWifi() {
+  clearTimers();
+  if (isLinked()) return;
+  const url = wsUrlOf($('wsAddr').value);
+  if (!url) { setConn('error'); setStatus('connStatus', 'Adresse invalide. Exemple : 192.168.4.1', 'err'); return; }
+  if (location.protocol === 'https:') {
+    setConn('error'); showHelp();
+    setStatus('connStatus', 'Cette page est en https : le navigateur bloque la liaison Wi-Fi (ws://). Ouvrez le fichier lidar_web.html depuis l’ordinateur.', 'err');
+    return;
+  }
+  try { localStorage.setItem('lidarWsAddr', $('wsAddr').value.trim()); } catch (_) { /* stockage indisponible */ }
+  stopSim(true); showHelp(false);
+  state.stop = false; state.bytes = 0; state.gotScan = false; state.monText = ''; state.monDirty = true; state.live = null; state.wsBad = 0;
+  parser.rows = []; parser.buf = ''; parser.lastAng = null;
+  wsOpen(url, 0);
+}
+function wsOpen(url, tries) {
+  const addr = url.replace(/^ws:\/\//, '').replace(/\/$/, '');
+  let ws;
+  try { ws = new WebSocket(url); }
+  catch (e) { setConn('error'); setStatus('connStatus', 'Connexion impossible : ' + e.message, 'err'); return; }
+  ws.binaryType = 'arraybuffer';
+  state.ws = ws; state.portLabel = 'Wi-Fi · ' + addr;
+  $('btnConnect').disabled = true; $('btnConnectWifi').disabled = true; $('btnDisconnect').disabled = false;
+  setStatus('connStatus', tries ? `Reconnexion à ${addr} (${tries}/${WS_RETRIES})…` : `Connexion à ${addr}…`);
+  let opened = false;
+  const giveUp = setTimeout(() => { if (!opened) { try { ws.close(); } catch (_) { /* déjà fermé */ } } }, 5000);
+  ws.onopen = () => {
+    opened = true; clearTimeout(giveUp);
+    setStatus('connStatus', tries ? 'Reconnecté en Wi-Fi.' : 'Connecté en Wi-Fi. Attente du premier tour complet…', 'ok');
+    setConn('live');
+    if (!tries) toast('Lidar connecté en Wi-Fi');
+    startWatchdogs();
+  };
+  ws.onmessage = ev => wsMessage(ev.data);
+  ws.onerror = () => { /* onclose suit toujours : le message est donné là */ };
+  ws.onclose = () => {
+    clearTimeout(giveUp);
+    if (state.ws !== ws) return;                              // déconnexion voulue ou connexion remplacée
+    if (!opened && tries === 0) {
+      wsEnd(`Pas de réponse de ${addr}. Vérifiez que l’ordinateur est connecté au Wi-Fi de l’ESP32, que la carte est alimentée, et l’adresse.`, 'error');
+      showHelp(); return;
+    }
+    if (tries >= WS_RETRIES) { wsEnd('Liaison Wi-Fi perdue. Reconnectez-vous.', 'error'); return; }
+    clearTimers();
+    setConn('error');
+    setStatus('connStatus', 'Liaison Wi-Fi perdue. Nouvelle tentative…', 'warn');
+    state.wsRetry = setTimeout(() => { if (state.ws === ws) wsOpen(url, tries + 1); }, 2000);
+  };
+}
+function wsMessage(data) {
+  const txt = typeof data === 'string' ? data : wsDecoder.decode(data);
+  state.bytes += txt.length;
+  state.monText = (state.monText + txt.slice(0, 200) + '\n').slice(-900); state.monDirty = true;
+  const m = parseWsMessage(txt);
+  if (m.kind === 'json') {
+    if (m.rows.length >= 50) ingest(m.rows);
+  } else if (m.kind === 'texte') {
+    parser.teleFlipY = $('optTeleFlip').checked;
+    parser.feed(txt.endsWith('\n') ? txt : txt + '\n');
+  } else if (m.kind === 'invalide' && state.wsBad++ === 0) {
+    setStatus('connStatus', 'Un message Wi-Fi est illisible (' + m.error + '). Ouvrez « Données reçues » pour le voir.', 'warn');
+  }
 }
 
 $('connPill').addEventListener('click', () => { setOpen('connect', true); stepEl('connect').scrollIntoView({ block: 'nearest' }); });
@@ -2381,6 +2517,7 @@ async function runDiag() {
       else add('warn', 'Aucun port encore autorisé', 'C’est normal avant la première connexion. Au clic sur « Connecter le lidar », le navigateur affiche tous les ports que Windows voit. Si cette liste est vide, suivez les pistes ci-dessous.');
     } catch (e) { add('warn', 'Liste des ports illisible', e.message); }
   }
+  if (state.ws) add(state.ws.readyState === 1 ? 'ok' : 'warn', 'Liaison Wi-Fi', `${state.portLabel}, ${plural(state.bytes, 'caractère reçu', 'caractères reçus')}.`);
   if (state.port) add('ok', 'Port ouvert', `${state.portLabel}, ${plural(state.bytes, 'octet reçu', 'octets reçus')}.`);
 }
 $('btnDiag').onclick = openDiag;
@@ -2409,7 +2546,7 @@ function ingest(rows) {
   while (state.scanTimes.length > 10) state.scanTimes.shift();
   if (!state.gotScan) {
     state.gotScan = true; flags.everConnected = true;
-    if (state.port) { setStatus('connStatus', 'Réception en cours.', 'ok'); showHelp(false); }
+    if (isLinked()) { setStatus('connStatus', 'Réception en cours.', 'ok'); showHelp(false); }
     updateTimeline();
   }
   if (state.queue > 0) { captureScan(scan); state.queue--; }
@@ -2442,7 +2579,7 @@ function simulateRows(pose, n = 450) {
   return rows;
 }
 function startSim() {
-  if (state.port) return;
+  if (isLinked()) return;
   flags.everConnected = true; state.gotScan = true;
   state.simTimer = setInterval(() => {
     ingest(simulateRows(capturePose()));
@@ -2888,16 +3025,17 @@ function updateEmpty() {
   const box = $('empty');
   let key = '', html = '';
   if (state.tab === 'live' && !state.live) {
-    if (state.port) {
+    if (isLinked()) {
       key = 'wait';
       html = `<h2>En attente du premier tour</h2>
-        <p>Les points apparaissent dès qu’un tour complet est reçu. Rien après quelques secondes ? Appuyez sur le bouton EN de la carte.</p>
+        <p>Les points apparaissent dès qu’un tour complet est reçu. Rien après quelques secondes ? ${state.ws ? 'Vérifiez que le lidar tourne.' : 'Appuyez sur le bouton EN de la carte.'}</p>
         <div class="row"><button class="btn" type="button" data-act="mon">Voir les données reçues</button></div>`;
     } else {
       key = 'none';
       html = `<h2>Aucune donnée du lidar</h2>
-        <p>Branchez l’ESP32 en USB puis connectez-le. Sans robot, la simulation montre le fonctionnement.</p>
-        <div class="row"><button class="btn primary" type="button" data-act="connect">Connecter le lidar</button>
+        <p>Branchez l’ESP32 en USB, ou connectez l’ordinateur à son Wi-Fi. Sans robot, la simulation montre le fonctionnement.</p>
+        <div class="row"><button class="btn primary" type="button" data-act="connect">Connecter en USB</button>
+        <button class="btn primary" type="button" data-act="wifi">Connecter en Wi-Fi</button>
         <button class="btn" type="button" data-act="sim">Lancer la simulation</button></div>`;
     }
   } else if ((state.tab === 'map' || state.tab === 'grid') && !state.scans.length) {
@@ -2916,6 +3054,7 @@ $('empty').addEventListener('click', e => {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const a = b.dataset.act;
   if (a === 'connect') connect();
+  else if (a === 'wifi') connectWifi();
   else if (a === 'sim') startSim();
   else if (a === 'live') setTab('live');
   else if (a === 'import') $('fileImport').click();
@@ -3145,6 +3284,8 @@ async function exportZip() {
 
 /* ---------- branchements ---------- */
 $('btnConnect').onclick = connect;
+$('btnConnectWifi').onclick = connectWifi;
+$('wsAddr').addEventListener('keydown', e => { if (e.key === 'Enter') connectWifi(); });
 $('btnDisconnect').onclick = disconnect;
 $('btnSim').onclick = () => (state.simTimer ? stopSim() : startSim());
 $('btnCapture').onclick = captureNow;
