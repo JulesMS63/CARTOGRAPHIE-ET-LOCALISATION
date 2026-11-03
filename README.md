@@ -30,7 +30,7 @@ Tu peux aussi dessiner une salle dans `Tools/MapTool/MapTool.html`, exporter le 
 Un seul fichier, sans installation : **double-clic**, à ouvrir avec **Chrome ou Edge** (pas dans une fenêtre
 intégrée à une application, pas Firefox ni Safari : ils n'ont pas l'accès série).
 
-La colonne de gauche est une **chronologie en 6 étapes**. L'étape en cours est jaune et ouverte, les étapes
+La colonne de gauche est une **chronologie en 7 étapes**. L'étape en cours est jaune et ouverte, les étapes
 terminées passent en bleu avec une coche, les suivantes restent grisées. Chaque étape se replie ou se déplie d'un clic.
 
 1. **Connecter le lidar** (USB de l'ESP32, moniteur série d'Arduino fermé). L'image s'affiche en direct.
@@ -48,7 +48,8 @@ terminées passent en bleu avec une coche, les suivantes restent grisées. Chaqu
    sont conservés : décocher la case les réaffiche.
    Les `scans/*.csv` exportés sont filtrés et commencent par une ligne `# pose: x=… y=… theta=…` : la position suit le fichier et est retrouvée à l'import ; `projet.json` reste brut.
 5. **Grille d'occupation 2D** : onglet **Grille 2D**. La grille sans filtre (à gauche) et avec filtre (à droite) se comparent avec un curseur de séparation ; un second curseur règle la force du filtre ; la taille des carreaux se saisit en millimètres (entier, 10 à 500). Un tableau compte les cellules occupées et celles qui sont isolées.
-6. **Exporter** : `.zip` avec `scans/*.csv`, `poses.json`, `carte_vectorielle.txt`, `grille.csv`, `carte.png`,
+6. **Localisation (Jour 2)** : onglet **Localisation**, voir la section ci-dessous.
+7. **Exporter** : `.zip` avec `scans/*.csv`, `poses.json`, `carte_vectorielle.txt`, `grille.csv`, `carte.png`,
    `projet.json` (ré-importable). Les outils Python lisent directement ce dossier :
    `python gridmap_tool.py build scans --poses poses.json --out carte`.
 
@@ -62,6 +63,42 @@ ne réagit, lancer `python -m http.server` dans ce dossier et ouvrir `http://loc
 Une fois connecté, « Données reçues » (étape 1) montre les derniers octets reçus : du texte lisible = bon câble et
 bonne vitesse ; des caractères étranges = mauvaise vitesse ; rien = le sketch n'envoie pas (bouton EN de la carte).
 Les réglages « Décalage » et « Miroir » corrigent le montage du capteur.
+
+### Jour 2 : localisation (onglet Localisation de `lidar_web.html`)
+
+Le but : retrouver la pose (x, y, θ) d'un scan, de trois façons, et **comparer les méthodes avec les mêmes conditions initiales**.
+
+| Référence (barre d'outils) | Entrée | Méthodes |
+| --- | --- | --- |
+| **A · Carte d'occupation** | scan + grille | force brute, multi-résolution, filtre à particules (Monte Carlo), descente de gradient |
+| **B · Carte vectorielle** | scan + segments | ICP point-à-ligne (calcul direct), force brute, multi-résolution, filtre à particules, descente de gradient |
+| **C · Scan à scan** | scan + scan voisin | ICP point-à-point, ICP point-à-ligne, corrélation (force brute), multi-résolution, filtre à particules |
+
+Les 14 méthodes sont opérationnelles. Pour A et B, la carte est construite avec **tous les autres scans** (le scan testé n'y est
+jamais : sinon il se retrouverait lui-même). Pour C, la référence est le scan le plus proche (ou celui choisi dans « Scan de référence »).
+
+**Vérité terrain.** Deux sources :
+- *Banc d'essai simulé* : une salle connue avec 8 poses exactes, bruit, parasites et graine réglables : à utiliser pour valider.
+- *Mes scans* : les poses de la liste (étape 3) servent de vérité. Elles ne sont aussi justes que ton placement : **Figer les poses**
+  les copie pour pouvoir ensuite déplacer les scans sans fausser les mesures, ou **Importer poses.json** (format de l'export).
+
+**Pose initiale.** Écart (Δx, Δy, Δθ) ajouté à la vérité, identique pour toutes les méthodes. Les curseurs montrent la pose
+initiale sur la carte (« Au hasard » en tire une). Trois modes :
+1. *Une localisation* : tableau des erreurs, du temps et du nombre d'évaluations ; un clic sur une ligne affiche la pose trouvée sur la carte.
+2. *Essais multiples* : N essais à direction aléatoire, taux de réussite, médianes, temps moyen et maximal.
+3. *Sensibilité* : 7 niveaux d'écart croissant (jusqu'à « écart max »), courbe taux de réussite = f(écart initial) par méthode.
+
+**Métriques.** Erreur de position (m), erreur d'angle (°, repliée dans [0, 180]), temps de calcul (ms), taux de réussite.
+**Un essai est réussi si erreur de position ≤ 0,05 m ET erreur d'angle ≤ 2°** (seuils réglables). Le temps ne compte que la
+localisation, pas la préparation de la carte (affichée à part). Résultats exportables en `localisation_resultats.csv`.
+
+**À savoir.** La force brute n'explore que ±fenêtre (0,5 m / 15° par défaut) autour de la pose initiale : au-delà, elle échoue
+par construction. Le filtre à particules et la multi-résolution tolèrent davantage ; l'ICP et le gradient sont rapides (1 à 8 ms)
+mais exigent une pose initiale proche. Sur le banc simulé (bruit 2 cm, 6 % de parasites) : tout réussit à 0,1 m / 3° ; l'ICP
+tombe à 75 % vers 0,5 m / 15° ; le filtre à particules tient encore à 1,2 m / 40°. **Rien de cela n'a été mesuré avec ton lidar** :
+refaire les mesures sur tes scans.
+
+Test du noyau (Node) : `node tests/web_loc_test.js lidar_web.html` (150 vérifications).
 
 ## Application de bureau : `lidar_app.py` (à ouvrir dans VS Code)
 

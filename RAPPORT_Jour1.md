@@ -232,3 +232,30 @@ points (2 à 4 cm à 3 m), les murs deviennent pointillés et les cellules « is
 | `break_min` | filtre des points isolés | 0,10 m | murs coupés en morceaux → 0,15 m |
 | `--cell-mm` | `grid2d_tool`, onglet Grille 2D | 50 mm | murs pointillés → 80 à 100 mm ; trop grossier → 25 à 30 mm |
 
+
+# Jour 2 – Localisation (page `lidar_web.html`, onglet Localisation)
+
+## 7. Méthodes et conditions de test
+
+| Type | Méthode | Principe (une phrase) |
+| --- | --- | --- |
+| A grille | force brute / multi-résolution / particules / gradient | on note chaque pose par la distance des points du scan aux cellules occupées (champ de distance exact) |
+| B vecteurs | ICP point-à-ligne (+ 4 autres) | chaque point est ramené à son segment le plus proche ; Gauss-Newton sur (x, y, θ) |
+| C scan à scan | ICP point-à-point / point-à-ligne / corrélation / multi-résolution / particules | recalage du scan courant sur un scan voisin |
+
+Conditions : même pose initiale pour toutes les méthodes (vérité + écart), seuils de réussite **0,05 m et 2°**, temps = localisation seule.
+Vérité terrain : **[À COMPLÉTER : banc simulé ou mes scans, et comment les poses ont été mesurées]**.
+
+## 8. Résultats
+
+**[À COMPLÉTER]** Tableau « essais multiples » (écart initial, N essais) et courbe de sensibilité exportés depuis la page,
+puis `localisation_resultats.csv`.
+
+| Méthode | Taux de réussite | Erreur pos. médiane (m) | Erreur ang. médiane (°) | Temps moyen (ms) |
+| --- | --- | --- | --- | --- |
+| **[À COMPLÉTER]** | | | | |
+
+## 9. Discussion
+
+**[À COMPLÉTER]** À discuter avec tes chiffres : à partir de quel écart initial chaque méthode échoue ; compromis précision / temps ;
+pourquoi la force brute dépend de sa fenêtre ; ce que change le bruit ; limite de la vérité terrain (placement manuel).

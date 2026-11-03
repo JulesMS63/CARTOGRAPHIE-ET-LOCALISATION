@@ -222,6 +222,40 @@
   .fixlist { margin: 0; padding-left: 20px; display: grid; gap: 8px; font-size: 13.5px; }
   .dlg-foot { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 
+  /* ---------- Jour 2 : localisation ---------- */
+  .locpanel { flex: none; height: 40vh; min-height: 230px; max-height: 450px; overflow: auto; background: var(--chalk);
+              border-top: 1px solid var(--hair-strong); padding: 10px 16px 16px; }
+  .locpanel[hidden] { display: none; }
+  .lp-head { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; margin-bottom: 10px; }
+  .lp-cond { color: var(--muted); font-size: 12.5px; flex: 1; min-width: 200px; }
+  table.lp { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.lp th { text-align: right; font-weight: 600; color: var(--muted); font-size: 12px; padding: 4px 8px 6px; white-space: nowrap; }
+  table.lp th:first-child, table.lp td:first-child { text-align: left; }
+  table.lp td { text-align: right; padding: 5px 8px; border-top: 1px solid var(--hair); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.lp tr.grp td { text-align: left; font-weight: 650; background: var(--mist); border-top: 0; padding: 6px 8px; font-size: 12.5px; }
+  table.lp tr.grp td small { font-weight: 400; color: var(--muted); margin-left: 8px; }
+  table.lp tr.base td { color: var(--muted); }
+  table.lp tr.meth { cursor: pointer; }
+  table.lp tr.meth:hover td { background: var(--blue-soft); }
+  table.lp tr.meth.off td:first-child { opacity: .45; }
+  table.lp td.na { color: var(--muted); text-align: left; }
+  .sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 8px; vertical-align: -1px; background: var(--c); }
+  .badge { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid; }
+  .badge.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
+  .badge.ko { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 50%, transparent); }
+  .rate { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; }
+  .rate .bar { width: 84px; height: 8px; border-radius: 4px; background: var(--hair); overflow: hidden; }
+  .rate .bar i { display: block; height: 100%; background: var(--ok); }
+  .lp-note { color: var(--muted); font-size: 12.5px; margin-top: 8px; max-width: 110ch; }
+  .lp-empty { color: var(--muted); padding: 18px 2px; }
+  #lpChart { position: static; inset: auto; width: 100%; height: 230px; display: block; touch-action: auto; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; color: var(--muted); margin: 6px 0 2px; }
+  .hud .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; background: var(--c); vertical-align: -1px; }
+  progress { width: 100%; height: 8px; accent-color: var(--blue); }
+  progress[hidden] { display: none; }
+  .mgroup { display: grid; gap: 4px; }
+  .mgroup > .lab { margin-top: 4px; }
+  .mgroup .check { font-size: 13px; }
   @media (prefers-reduced-motion: reduce) {
     .body, .chev, .toast { transition: none; }
     .node.pulse, .sweep { animation: none; }
@@ -413,9 +447,105 @@
       </section>
     </li>
 
-    <!-- 6. Export -->
-    <li class="step" data-step="export" data-state="todo" data-line="todo">
+    <!-- 6. Localisation (Jour 2) -->
+    <li class="step" data-step="loc" data-state="todo" data-line="todo">
       <div class="rail"><span class="node" aria-hidden="true"><span class="num">6</span>
+        <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
+      <section class="card">
+        <h2 class="step-h"><button type="button" class="head" aria-expanded="false" aria-controls="b-loc">
+          <span><span class="t">Localisation (Jour 2)</span><span class="s" data-summary></span></span>
+          <span class="chip" data-chip></span>
+          <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg>
+        </button></h2>
+        <div class="body" id="b-loc"><div class="inner"><div class="pad">
+          <button class="btn primary" id="btnGoLoc" type="button">Ouvrir l'onglet Localisation</button>
+          <div>
+            <div class="lab" style="margin-bottom:6px">Données de test</div>
+            <label class="check"><input type="radio" name="locSrc" value="bench" checked> Banc d'essai simulé : salle connue, poses exactes</label>
+            <label class="check" style="margin-top:6px"><input type="radio" name="locSrc" value="project"> Mes scans : les poses de la liste font office de vérité terrain</label>
+          </div>
+          <div id="locBenchBox" class="grid3">
+            <div class="field"><label for="locNoise">Bruit (cm)</label><input type="number" id="locNoise" value="1" min="0" max="10" step="0.5"></div>
+            <div class="field"><label for="locOutl">Parasites (%)</label><input type="number" id="locOutl" value="3" min="0" max="30" step="1"></div>
+            <div class="field"><label for="locSeed">Graine</label><input type="number" id="locSeed" value="7" min="1" step="1"></div>
+          </div>
+          <div id="locTruthBox" hidden>
+            <div class="row">
+              <button class="btn sm" id="btnLocFreeze" type="button">Figer les poses actuelles</button>
+              <button class="btn sm" id="btnLocTruth" type="button">Importer poses.json</button>
+              <input type="file" id="fileLocTruth" accept=".json" hidden>
+            </div>
+            <p class="hint" id="locTruthInfo" style="margin-top:6px"></p>
+          </div>
+          <div class="grid2">
+            <div class="field"><label for="locTest">Scan à localiser</label><select id="locTest"></select></div>
+            <div class="field"><label for="locRef">Référence « scan à scan »</label><select id="locRef"></select></div>
+          </div>
+          <details class="sub" open><summary>Pose initiale : écart à la vérité terrain</summary>
+            <div class="subbody">
+              <div class="grid3">
+                <div class="field"><label for="locDx">Δx (m)</label><input type="number" id="locDx" value="0.20" step="0.05"></div>
+                <div class="field"><label for="locDy">Δy (m)</label><input type="number" id="locDy" value="-0.15" step="0.05"></div>
+                <div class="field"><label for="locDth">Δθ (°)</label><input type="number" id="locDth" value="6" step="1"></div>
+              </div>
+              <div class="row"><button class="btn sm" id="btnLocRand" type="button">Tirer au hasard</button><button class="btn sm" id="btnLocZero" type="button">Remettre à zéro</button></div>
+              <p class="hint">Pose initiale = vérité terrain + cet écart (visible en gris dans l'onglet). Les essais multiples gardent la taille de l'écart et tirent sa direction au hasard.</p>
+            </div>
+          </details>
+          <details class="sub"><summary>Méthodes à comparer</summary>
+            <div class="subbody">
+              <div class="mgroup"><span class="lab">A · Carte d'occupation</span>
+                <label class="check"><input type="checkbox" data-loc="grid/brute" checked> Force brute</label>
+                <label class="check"><input type="checkbox" data-loc="grid/multires" checked> Multi-résolution</label>
+                <label class="check"><input type="checkbox" data-loc="grid/mc" checked> Filtre à particules</label>
+                <label class="check"><input type="checkbox" data-loc="grid/gd" checked> Descente de gradient</label></div>
+              <div class="mgroup"><span class="lab">B · Carte vectorielle</span>
+                <label class="check"><input type="checkbox" data-loc="vec/icp" checked> ICP point-à-ligne</label>
+                <label class="check"><input type="checkbox" data-loc="vec/brute" checked> Force brute</label>
+                <label class="check"><input type="checkbox" data-loc="vec/multires" checked> Multi-résolution</label>
+                <label class="check"><input type="checkbox" data-loc="vec/mc" checked> Filtre à particules</label>
+                <label class="check"><input type="checkbox" data-loc="vec/gd" checked> Descente de gradient</label></div>
+              <div class="mgroup"><span class="lab">C · Scan à scan</span>
+                <label class="check"><input type="checkbox" data-loc="scan/icp" checked> ICP point-à-point</label>
+                <label class="check"><input type="checkbox" data-loc="scan/icpl" checked> ICP point-à-ligne</label>
+                <label class="check"><input type="checkbox" data-loc="scan/brute" checked> Corrélation (force brute)</label>
+                <label class="check"><input type="checkbox" data-loc="scan/multires" checked> Multi-résolution</label>
+                <label class="check"><input type="checkbox" data-loc="scan/mc" checked> Filtre à particules</label></div>
+            </div>
+          </details>
+          <details class="sub"><summary>Fenêtre de recherche, seuils, essais</summary>
+            <div class="subbody">
+              <div class="grid2">
+                <div class="field"><label for="locWinXY">Fenêtre ± position (m)</label><input type="number" id="locWinXY" value="0.5" min="0.05" step="0.05"></div>
+                <div class="field"><label for="locWinTh">Fenêtre ± angle (°)</label><input type="number" id="locWinTh" value="15" min="1" step="1"></div>
+                <div class="field"><label for="locThrPos">Seuil de réussite : position (m)</label><input type="number" id="locThrPos" value="0.05" min="0.001" step="0.01"></div>
+                <div class="field"><label for="locThrAng">Seuil de réussite : angle (°)</label><input type="number" id="locThrAng" value="2" min="0.05" step="0.5"></div>
+                <div class="field"><label for="locCell">Carreaux de la grille (mm)</label><input type="number" id="locCell" value="50" min="10" max="200" step="5" inputmode="numeric"></div>
+                <div class="field"><label for="locN">Essais multiples (nombre)</label><input type="number" id="locN" value="20" min="2" max="500" step="1"></div>
+                <div class="field"><label for="locSwRho">Balayage : écart max (m)</label><input type="number" id="locSwRho" value="1" min="0.1" step="0.1"></div>
+                <div class="field"><label for="locSwDeg">Balayage : écart max (°)</label><input type="number" id="locSwDeg" value="30" min="1" step="5"></div>
+                <div class="field"><label for="locSwN">Balayage : essais par niveau</label><input type="number" id="locSwN" value="6" min="2" max="50" step="1"></div>
+              </div>
+              <p class="hint"><b>Fenêtre</b> : la force brute n'explore que ±cette zone autour de la pose initiale ; les particules y sont tirées au départ ; l'ICP et le gradient n'en ont pas besoin mais exigent une pose initiale proche.
+                <b>Réussite</b> : un essai réussit si l'erreur finale est ≤ le seuil de position <u>et</u> ≤ le seuil d'angle. Un seuil trop large cache l'imprécision, un seuil trop serré mesure surtout le bruit du lidar.</p>
+            </div>
+          </details>
+          <div class="row">
+            <button class="btn primary" id="btnLocOne" type="button">Localiser</button>
+            <button class="btn" id="btnLocMulti" type="button">Essais multiples</button>
+            <button class="btn" id="btnLocSweep" type="button">Courbe de sensibilité</button>
+            <button class="btn danger" id="btnLocStop" type="button" hidden>Arrêter</button>
+          </div>
+          <progress id="locProg" max="1" value="0" hidden></progress>
+          <div class="status" id="locStatus" aria-live="polite"></div>
+          <div class="row"><button class="btn sm" id="btnLocCsv" type="button">Résultats (.csv)</button></div>
+          <p class="hint">Toutes les méthodes cochées partent de la même pose initiale. Le temps ne compte que la localisation (pas la préparation de la carte, indiquée à part). Dans les essais multiples, le scan localisé n'est jamais dans la carte de référence.</p>
+        </div></div></div>
+      </section>
+    </li>
+    <!-- 7. Export -->
+    <li class="step" data-step="export" data-state="todo" data-line="todo">
+      <div class="rail"><span class="node" aria-hidden="true"><span class="num">7</span>
         <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
       <section class="card">
         <h2 class="step-h"><button type="button" class="head" aria-expanded="false" aria-controls="b-export">
@@ -444,6 +574,7 @@
       <button role="tab" id="tabLive" aria-selected="true" type="button">Direct</button>
       <button role="tab" id="tabMap" aria-selected="false" type="button">Carte</button>
       <button role="tab" id="tabGrid" aria-selected="false" type="button">Grille 2D</button>
+      <button role="tab" id="tabLoc" aria-selected="false" type="button">Localisation</button>
     </div>
     <div class="opts" id="liveOpts">
       <label class="check"><input type="checkbox" id="optLiveSeg"> Segments</label>
@@ -456,6 +587,13 @@
       <span class="vsep"></span>
       <label class="inl" for="gridRes2">Carreaux (mm)</label>
       <input type="number" id="gridRes2" value="50" step="1" min="10" max="500" inputmode="numeric" title="Taille d'un carreau de la grille en millimètres (entier de 10 à 500). Entrée ou clic ailleurs pour appliquer.">
+    </div>
+    <div class="opts" id="locOpts" style="display:none">
+      <label class="check" title="Affiche la carte de référence de type A : grille d'occupation"><input type="radio" name="ltype" value="grid" checked> Carte d'occupation</label>
+      <label class="check" title="Affiche la carte de référence de type B : segments"><input type="radio" name="ltype" value="vec"> Carte vectorielle</label>
+      <label class="check" title="Affiche la référence de type C : un scan pris à proximité"><input type="radio" name="ltype" value="scan"> Scan à scan</label>
+      <span class="vsep"></span>
+      <label class="check"><input type="checkbox" id="locShowPts" checked> Points du scan</label>
     </div>
     <div class="opts" id="mapOpts" style="display:none">
       <label class="check"><input type="checkbox" id="layPts" checked> Points</label>
@@ -481,6 +619,17 @@
     </div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
+  <section class="locpanel" id="locPanel" aria-label="Résultats de localisation" hidden>
+    <div class="lp-head">
+      <div class="seg" role="tablist" aria-label="Résultats">
+        <button role="tab" id="lpOne" aria-selected="true" type="button">Une localisation</button>
+        <button role="tab" id="lpMulti" aria-selected="false" type="button">Essais multiples</button>
+        <button role="tab" id="lpSens" aria-selected="false" type="button">Sensibilité</button>
+      </div>
+      <span class="lp-cond" id="lpCond"></span>
+    </div>
+    <div id="lpBody"></div>
+  </section>
 </main>
 </div>
 
@@ -1112,7 +1261,505 @@ function makeZipParts(files) {                 // files : [{name, data: Uint8Arr
   end.setUint32(12, csize, true); end.setUint32(16, offset, true);
   return [...chunks, ...central, new Uint8Array(end.buffer)];
 }
+
+/* ======================================================================
+   JOUR 2 : LOCALISATION (calcul pur, sans DOM)
+   Retrouver la pose (x, y, theta) d'un scan : sur une grille d'occupation (A), sur une carte vectorielle (B)
+   ou par rapport à un autre scan (C). Les méthodes « globales » (force brute, multi-résolution, particules)
+   explorent une fenêtre autour de la pose initiale ; les méthodes « locales » (ICP, gradient) suivent la pente
+   à partir de la pose initiale et ne marchent que si elle est assez proche.
+   ====================================================================== */
+const wrapDeg = a => ((a + 180) % 360 + 360) % 360 - 180;
+const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+/* ---------- aléatoire reproductible (mulberry32) ---------- */
+function makeRng(seed) {
+  let a = (seed >>> 0) || 1;
+  return function () {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const gaussRng = rng => Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(2 * Math.PI * rng());
+
+/* ---------- salle simulée (6 x 4 m, pilier, meuble) et lidar virtuel ---------- */
+const SIM_WALLS = [
+  [0, 0, 6, 0], [6, 0, 6, 4], [6, 4, 0, 4], [0, 4, 0, 0],
+  [3, 2, 3.5, 2], [3.5, 2, 3.5, 2.5], [3.5, 2.5, 3, 2.5], [3, 2.5, 3, 2],
+  [1, 0, 1, 0.6], [1, 0.6, 2.2, 0.6], [2.2, 0.6, 2.2, 0],
+];
+function simulateScan(name, pose, rng, o = {}) {
+  const n = o.n ?? 450, noise = o.noise ?? 0.01, dropout = o.dropout ?? 0.02, outliers = o.outliers ?? 0;
+  const walls = o.walls || SIM_WALLS, ang = [], dist = [];
+  for (let k = 0; k < n; k++) {
+    const a = k * 360 / n, aw = (a + pose.th) * D2R, dx = Math.cos(aw), dy = Math.sin(aw);
+    let best = Infinity;
+    for (const [x1, y1, x2, y2] of walls) {
+      const ex = x2 - x1, ey = y2 - y1, den = dx * ey - dy * ex;
+      if (Math.abs(den) < 1e-12) continue;
+      const wx = x1 - pose.x, wy = y1 - pose.y;
+      const t = (wx * ey - wy * ex) / den, u = (wx * dy - wy * dx) / den;
+      if (t > 1e-6 && u >= 0 && u <= 1) best = Math.min(best, t);
+    }
+    if (!(isFinite(best) && best <= MAX_RANGE) || rng() < dropout) continue;
+    let r = best + noise * gaussRng(rng);
+    if (outliers > 0 && rng() < outliers) r = 0.2 + rng() * 5;            // parasite isolé : remplace la mesure
+    ang.push(a); dist.push(r);
+  }
+  const s = makeScan(name, ang, dist);
+  s.pose = { ...pose };
+  return s;
+}
+/* Banc d'essai : 8 positions connues dans la salle simulée (la vérité terrain est exacte). */
+const BENCH_POSES = [
+  [1.0, 1.5, 0], [2.5, 3.0, 35], [4.8, 1.2, 120], [5.0, 3.2, -150],
+  [1.5, 3.0, -20], [4.0, 3.4, 90], [3.0, 1.0, -160], [5.2, 2.0, 60],
+];
+function benchDataset(seed = 7, o = {}) {
+  const rng = makeRng(seed);
+  return BENCH_POSES.map((p, i) => {
+    const pose = { x: p[0], y: p[1], th: p[2] };
+    return { name: 'sim_' + String(i).padStart(2, '0'), scan: simulateScan('sim_' + String(i).padStart(2, '0'), pose, rng, o), truth: pose };
+  });
+}
+
+/* ---------- poses ---------- */
+function poseError(est, truth) {
+  const pos = Math.hypot(est.x - truth.x, est.y - truth.y), ang = Math.abs(wrapDeg(est.th - truth.th));
+  return { pos: isFinite(pos) ? pos : Infinity, ang: isFinite(ang) ? ang : Infinity };
+}
+const offsetPose = (p, dx, dy, dth) => ({ x: p.x + dx, y: p.y + dy, th: wrapDeg(p.th + dth) });
+/* Pose initiale d'un essai : écart de taille donnée (rho en m, delta en °), direction et sens tirés au hasard. */
+function randomOffset(rho, delta, rng) {
+  const phi = 2 * Math.PI * rng();
+  return { dx: rho * Math.cos(phi), dy: rho * Math.sin(phi), dth: (rng() < 0.5 ? -1 : 1) * delta };
+}
+function relativePose(base, p) {                    // p exprimée dans le repère de base (Δx, Δy, Δθ du scan par rapport à la référence)
+  const c = Math.cos(base.th * D2R), s = Math.sin(base.th * D2R), dx = p.x - base.x, dy = p.y - base.y;
+  return { x: c * dx + s * dy, y: -s * dx + c * dy, th: wrapDeg(p.th - base.th) };
+}
+
+/* ---------- champ de distance (transformée en distance exacte, Felzenszwalb) ---------- */
+function edt1d(f, n, d, v, z) {
+  let k = 0; v[0] = 0; z[0] = -Infinity; z[1] = Infinity;
+  for (let q = 1; q < n; q++) {
+    let s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+    while (s <= z[k]) { k--; s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]); }
+    k++; v[k] = q; z[k] = s; z[k + 1] = Infinity;
+  }
+  k = 0;
+  for (let q = 0; q < n; q++) { while (z[k + 1] < q) k++; d[q] = (q - v[k]) * (q - v[k]) + f[v[k]]; }
+}
+function distanceTransform(mask, nx, ny, res) {
+  const INF = 1e12, m = Math.max(nx, ny), f = new Float64Array(m), d = new Float64Array(m), v = new Int32Array(m), z = new Float64Array(m + 1);
+  const g = new Float64Array(nx * ny);
+  let any = false;
+  for (let x = 0; x < nx; x++) {
+    for (let y = 0; y < ny; y++) { const on = mask[y * nx + x]; f[y] = on ? 0 : INF; if (on) any = true; }
+    edt1d(f, ny, d, v, z);
+    for (let y = 0; y < ny; y++) g[y * nx + x] = d[y];
+  }
+  if (!any) return null;
+  for (let y = 0; y < ny; y++) {
+    for (let x = 0; x < nx; x++) f[x] = g[y * nx + x];
+    edt1d(f, nx, d, v, z);
+    for (let x = 0; x < nx; x++) g[y * nx + x] = d[x];
+  }
+  const out = new Float32Array(nx * ny);
+  for (let i = 0; i < out.length; i++) out[i] = Math.sqrt(g[i]) * res;
+  return out;
+}
+class DistField {
+  constructor(xmin, ymin, nx, ny, res, d) { this.xmin = xmin; this.ymin = ymin; this.nx = nx; this.ny = ny; this.res = res; this.d = d; }
+  /* distance (m) au plus proche obstacle, interpolée entre les centres de cellules ; hors de la grille on ajoute la distance au bord */
+  at(x, y) {
+    const nx = this.nx, ny = this.ny;
+    let fx = (x - this.xmin) / this.res - 0.5, fy = (y - this.ymin) / this.res - 0.5, ex = 0, ey = 0;
+    if (fx < 0) { ex = -fx; fx = 0; } else if (fx > nx - 1) { ex = fx - (nx - 1); fx = nx - 1; }
+    if (fy < 0) { ey = -fy; fy = 0; } else if (fy > ny - 1) { ey = fy - (ny - 1); fy = ny - 1; }
+    let i = Math.floor(fx), j = Math.floor(fy);
+    if (i > nx - 2) i = Math.max(0, nx - 2);
+    if (j > ny - 2) j = Math.max(0, ny - 2);
+    const tx = fx - i, ty = fy - j, d = this.d, i1 = Math.min(nx - 1, i + 1), j1 = Math.min(ny - 1, j + 1);
+    const a = d[j * nx + i], b = d[j * nx + i1], c = d[j1 * nx + i], e = d[j1 * nx + i1];
+    const v = (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + e * tx) * ty;
+    return (ex || ey) ? v + Math.hypot(ex, ey) * this.res : v;
+  }
+}
+function fieldFromGrid(grid) {
+  const cls = grid.classify(), mask = new Uint8Array(cls.length);
+  for (let i = 0; i < cls.length; i++) mask[i] = cls[i] === 1 ? 1 : 0;
+  const d = distanceTransform(mask, grid.nx, grid.ny, grid.res);
+  return d ? new DistField(grid.xmin, grid.ymin, grid.nx, grid.ny, grid.res, d) : null;
+}
+function fieldFromPoints(P, res = 0.02, margin = 1.0) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < P.length; i += 2) { x0 = Math.min(x0, P[i]); x1 = Math.max(x1, P[i]); y0 = Math.min(y0, P[i + 1]); y1 = Math.max(y1, P[i + 1]); }
+  if (!isFinite(x0)) return null;
+  x0 -= margin; y0 -= margin; x1 += margin; y1 += margin;
+  const nx = Math.max(2, Math.ceil((x1 - x0) / res)), ny = Math.max(2, Math.ceil((y1 - y0) / res)), mask = new Uint8Array(nx * ny);
+  for (let i = 0; i < P.length; i += 2) {
+    const ci = Math.floor((P[i] - x0) / res), cj = Math.floor((P[i + 1] - y0) / res);
+    if (ci >= 0 && ci < nx && cj >= 0 && cj < ny) mask[cj * nx + ci] = 1;
+  }
+  const d = distanceTransform(mask, nx, ny, res);
+  return d ? new DistField(x0, y0, nx, ny, res, d) : null;
+}
+
+/* ---------- segments : tableaux pour un calcul rapide ---------- */
+function segArrays(segs) {
+  const n = segs.length, A = { n, ax: new Float64Array(n), ay: new Float64Array(n), vx: new Float64Array(n), vy: new Float64Array(n),
+                               il2: new Float64Array(n), nx: new Float64Array(n), ny: new Float64Array(n) };
+  segs.forEach((s, k) => {
+    const L = s.len || 1e-9;
+    A.ax[k] = s.x1; A.ay[k] = s.y1; A.vx[k] = s.vx; A.vy[k] = s.vy; A.il2[k] = 1 / (L * L); A.nx[k] = -s.vy / L; A.ny[k] = s.vx / L;
+  });
+  return A;
+}
+/* plus proche segment du point : renvoie l'indice (ou -1) et remplit out.qx, out.qy, out.d2 */
+function nearestSeg(A, px, py, out) {
+  let best = Infinity, bk = -1, bqx = 0, bqy = 0;
+  for (let k = 0; k < A.n; k++) {
+    let t = ((px - A.ax[k]) * A.vx[k] + (py - A.ay[k]) * A.vy[k]) * A.il2[k];
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const qx = A.ax[k] + t * A.vx[k], qy = A.ay[k] + t * A.vy[k], dx = px - qx, dy = py - qy, d2 = dx * dx + dy * dy;
+    if (d2 < best) { best = d2; bk = k; bqx = qx; bqy = qy; }
+  }
+  out.qx = bqx; out.qy = bqy; out.d2 = best;
+  return bk;
+}
+
+/* ---------- index spatial des points d'un scan de référence (plus proche voisin) ---------- */
+class PointIndex {
+  constructor(P, cell = 0.15) {
+    this.P = P; this.cell = cell;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let i = 0; i < P.length; i += 2) { x0 = Math.min(x0, P[i]); x1 = Math.max(x1, P[i]); y0 = Math.min(y0, P[i + 1]); y1 = Math.max(y1, P[i + 1]); }
+    this.x0 = x0; this.y0 = y0;
+    this.nx = Math.max(1, Math.ceil((x1 - x0) / cell) + 1); this.ny = Math.max(1, Math.ceil((y1 - y0) / cell) + 1);
+    this.head = new Int32Array(this.nx * this.ny).fill(-1);
+    this.next = new Int32Array(P.length / 2).fill(-1);
+    for (let k = 0; k < P.length / 2; k++) {
+      const c = Math.floor((P[2 * k] - x0) / cell) + this.nx * Math.floor((P[2 * k + 1] - y0) / cell);
+      this.next[k] = this.head[c]; this.head[c] = k;
+    }
+  }
+  /* indice du point le plus proche à moins de r (ou -1) ; out.d2 = distance au carré */
+  nearest(x, y, r, out) {
+    const cell = this.cell, ci = Math.floor((x - this.x0) / cell), cj = Math.floor((y - this.y0) / cell), k = Math.ceil(r / cell);
+    let best = r * r, bk = -1;
+    for (let j = Math.max(0, cj - k); j <= Math.min(this.ny - 1, cj + k); j++) {
+      for (let i = Math.max(0, ci - k); i <= Math.min(this.nx - 1, ci + k); i++) {
+        for (let p = this.head[j * this.nx + i]; p >= 0; p = this.next[p]) {
+          const dx = this.P[2 * p] - x, dy = this.P[2 * p + 1] - y, d2 = dx * dx + dy * dy;
+          if (d2 < best) { best = d2; bk = p; }
+        }
+      }
+    }
+    out.d2 = best;
+    return bk;
+  }
+}
+/* normales d'un scan (repère quelconque) : tangente entre les voisins i-2 et i+2 ; NaN si le voisinage est interrompu */
+function scanNormals(P, maxGap = 0.30) {
+  const n = P.length / 2, N = new Float64Array(2 * n).fill(NaN);
+  for (let i = 0; i < n; i++) {
+    const a = (i - 2 + n) % n, b = (i + 2) % n;
+    const tx = P[2 * b] - P[2 * a], ty = P[2 * b + 1] - P[2 * a + 1], L = Math.hypot(tx, ty);
+    const g1 = Math.hypot(P[2 * i] - P[2 * a], P[2 * i + 1] - P[2 * a + 1]), g2 = Math.hypot(P[2 * b] - P[2 * i], P[2 * b + 1] - P[2 * i + 1]);
+    if (L < 1e-6 || g1 > maxGap || g2 > maxGap || n < 5) continue;
+    N[2 * i] = -ty / L; N[2 * i + 1] = tx / L;
+  }
+  return N;
+}
+
+/* ---------- fonctions de score : 1 = les points du scan tombent sur des obstacles, 0 = très loin ---------- */
+function strided(pts, maxN) {
+  const n = pts.length / 2;
+  if (n <= maxN) return pts;
+  const step = n / maxN, out = new Float64Array(2 * maxN);
+  for (let k = 0; k < maxN; k++) { const i = Math.floor(k * step); out[2 * k] = pts[2 * i]; out[2 * k + 1] = pts[2 * i + 1]; }
+  return out;
+}
+function makeFieldScorer(field, pts, maxPts = 180) {
+  const P = strided(pts, maxPts), n = P.length / 2;
+  return (pose, sigma) => {
+    const c = Math.cos(pose.th * D2R), s = Math.sin(pose.th * D2R), k = -1 / (2 * sigma * sigma);
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      const px = P[2 * i], py = P[2 * i + 1], d = field.at(c * px - s * py + pose.x, s * px + c * py + pose.y);
+      sum += Math.exp(k * d * d);
+    }
+    return sum / n;
+  };
+}
+function makeSegScorer(A, pts, maxPts = 90) {
+  const P = strided(pts, maxPts), n = P.length / 2, o = {};
+  return (pose, sigma) => {
+    const c = Math.cos(pose.th * D2R), s = Math.sin(pose.th * D2R), k = -1 / (2 * sigma * sigma);
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      const px = P[2 * i], py = P[2 * i + 1];
+      nearestSeg(A, c * px - s * py + pose.x, s * px + c * py + pose.y, o);
+      sum += Math.exp(k * o.d2);
+    }
+    return sum / n;
+  };
+}
+
+/* ---------- recherches génériques (elles ne connaissent que la fonction de score) ---------- */
+function searchBrute(score, init, win, o = {}) {
+  const sig = o.sigma ?? 0.12, sxy = o.stepXY ?? 0.05, sth = o.stepTh ?? 1, fxy = o.fineXY ?? 0.01, fth = o.fineTh ?? 0.25, sigF = o.sigmaFine ?? 0.06;
+  let evals = 0, best = { s: -1, x: init.x, y: init.y, th: init.th };
+  const nx = Math.floor(win.xy / sxy + 1e-9), nt = Math.floor(win.th / sth + 1e-9);
+  for (let a = -nt; a <= nt; a++) {
+    const th = init.th + a * sth;
+    for (let i = -nx; i <= nx; i++) for (let j = -nx; j <= nx; j++) {
+      const p = { x: init.x + i * sxy, y: init.y + j * sxy, th }, s = score(p, sig); evals++;
+      if (s > best.s) best = { s, x: p.x, y: p.y, th };
+    }
+  }
+  const c = best, kx = Math.round(sxy / fxy), kt = Math.round(sth / fth);        // passe fine autour du meilleur point
+  best = { s: -1, x: c.x, y: c.y, th: c.th };
+  for (let a = -kt; a <= kt; a++) for (let i = -kx; i <= kx; i++) for (let j = -kx; j <= kx; j++) {
+    const p = { x: c.x + i * fxy, y: c.y + j * fxy, th: c.th + a * fth }, s = score(p, sigF); evals++;
+    if (s > best.s) best = { s, x: p.x, y: p.y, th: p.th };
+  }
+  return { pose: { x: best.x, y: best.y, th: wrapDeg(best.th) }, score: best.s, evals, iters: 1 };
+}
+function searchMulti(score, init, win, o = {}) {
+  const K = o.beam ?? 3, minStep = o.minStep ?? 0.0125;
+  let sxy = Math.max(0.2, win.xy / 4), sth = Math.max(4, win.th / 4), evals = 0, level = 0;
+  const sigmaOf = st => Math.min(0.4, Math.max(0.05, 2 * st));
+  let cands = [], res = [];
+  {                                                                    // niveau 0 : toute la fenêtre, pas grossier, score très flou
+    const nx = Math.floor(win.xy / sxy + 1e-9), nt = Math.floor(win.th / sth + 1e-9), sg = sigmaOf(sxy);
+    for (let a = -nt; a <= nt; a++) for (let i = -nx; i <= nx; i++) for (let j = -nx; j <= nx; j++) {
+      const p = { x: init.x + i * sxy, y: init.y + j * sxy, th: init.th + a * sth };
+      res.push({ ...p, s: score(p, sg) }); evals++;
+    }
+  }
+  const pick = (list, stxy, stth) => {                                 // les K meilleurs, assez différents les uns des autres
+    list.sort((p, q) => q.s - p.s);
+    const out = [];
+    for (const c of list) {
+      if (out.every(b => Math.hypot(b.x - c.x, b.y - c.y) > 1.5 * stxy || Math.abs(b.th - c.th) > 1.5 * stth)) out.push(c);
+      if (out.length >= K) break;
+    }
+    return out;
+  };
+  cands = pick(res, sxy, sth);
+  while (sxy > minStep) {
+    level++;
+    const pxy = sxy, pth = sth; sxy /= 2; sth /= 2;
+    const sg = sigmaOf(sxy); res = [];
+    for (const c of cands) for (let a = -2; a <= 2; a++) for (let i = -2; i <= 2; i++) for (let j = -2; j <= 2; j++) {
+      const p = { x: c.x + i * sxy, y: c.y + j * sxy, th: c.th + a * sth };
+      res.push({ ...p, s: score(p, sg) }); evals++;
+    }
+    cands = pick(res, sxy, sth);
+  }
+  const b = cands[0];
+  return { pose: { x: b.x, y: b.y, th: wrapDeg(b.th) }, score: b.s, evals, iters: level + 1 };
+}
+function searchParticles(score, init, win, o = {}) {
+  const N = o.N ?? 300, T = o.iters ?? 10, rng = o.rng || makeRng(1);
+  let P = [];
+  for (let k = 0; k < N; k++) P.push({ x: init.x + (2 * rng() - 1) * win.xy, y: init.y + (2 * rng() - 1) * win.xy, th: init.th + (2 * rng() - 1) * win.th });
+  let evals = 0, est = { x: init.x, y: init.y, th: init.th }, bestS = -1;
+  for (let t = 0; t < T; t++) {
+    const sg = Math.max(0.06, 0.3 * Math.pow(0.7, t)), beta = 15 + 10 * t;
+    let smax = -1;
+    const S = P.map(p => { const s = score(p, sg); evals++; if (s > smax) smax = s; return s; });
+    const W = S.map(s => Math.exp(beta * (s - smax)));
+    const sumW = W.reduce((a, b) => a + b, 0);
+    let mx = 0, my = 0, cs = 0, sn = 0;
+    for (let k = 0; k < N; k++) { const w = W[k] / sumW; mx += w * P[k].x; my += w * P[k].y; cs += w * Math.cos(P[k].th * D2R); sn += w * Math.sin(P[k].th * D2R); }
+    est = { x: mx, y: my, th: Math.atan2(sn, cs) * R2D }; bestS = smax;
+    if (t === T - 1) break;
+    const cum = new Float64Array(N); let acc = 0;                       // rééchantillonnage systématique
+    for (let k = 0; k < N; k++) { acc += W[k] / sumW; cum[k] = acc; }
+    const u0 = rng() / N, next = []; let k = 0;
+    for (let m = 0; m < N; m++) { const u = u0 + m / N; while (k < N - 1 && cum[k] < u) k++; next.push(P[k]); }
+    const sxy = Math.max(0.004, 0.5 * win.xy * Math.pow(0.62, t)), sth = Math.max(0.1, 0.5 * win.th * Math.pow(0.62, t));
+    P = next.map(p => ({ x: p.x + sxy * gaussRng(rng), y: p.y + sxy * gaussRng(rng), th: p.th + sth * gaussRng(rng) }));
+  }
+  return { pose: { x: est.x, y: est.y, th: wrapDeg(est.th) }, score: bestS, evals, iters: T };
+}
+function searchGradient(score, init, o = {}) {
+  const sig = o.sigma ?? 0.15, maxIter = o.maxIter ?? 120, ex = 0.004, eth = 0.2;
+  let p = { x: init.x, y: init.y, th: init.th }, f = score(p, sig), step = 0.08, evals = 1, it = 0;
+  for (; it < maxIter && step > 4e-4; it++) {
+    const gx = (score({ ...p, x: p.x + ex }, sig) - score({ ...p, x: p.x - ex }, sig)) / (2 * ex);
+    const gy = (score({ ...p, y: p.y + ex }, sig) - score({ ...p, y: p.y - ex }, sig)) / (2 * ex);
+    const gq = (score({ ...p, th: p.th + eth }, sig) - score({ ...p, th: p.th - eth }, sig)) / (2 * eth * D2R);   // par radian (1 rad ~ 1 m)
+    evals += 6;
+    const gn = Math.hypot(gx, gy, gq);
+    if (gn < 1e-9) break;
+    const q = { x: p.x + step * gx / gn, y: p.y + step * gy / gn, th: p.th + step * (gq / gn) * R2D }, fq = score(q, sig); evals++;
+    if (fq > f) { p = q; f = fq; step = Math.min(0.15, step * 1.3); } else step *= 0.5;
+  }
+  return { pose: { x: p.x, y: p.y, th: wrapDeg(p.th) }, score: f, evals, iters: it };
+}
+
+/* ---------- ICP ---------- */
+/* Gauss-Newton sur les distances point -> droite. corr(wx, wy, out) remplit out.qx, qy, nx, ny, d (normale unitaire) ou renvoie false. */
+function icpLine(pts, init, corr, o = {}) {
+  const maxIter = o.maxIter ?? 50, tau0 = o.tau0 ?? 0.6, tauMin = o.tauMin ?? 0.15, decay = o.decay ?? 0.85, minIn = o.minInliers ?? 8;
+  const n = pts.length / 2, out = {};
+  let p = { x: init.x, y: init.y, th: init.th }, it = 0, inl = 0, rms = 0, evals = 0;
+  for (; it < maxIter; it++) {
+    const c = Math.cos(p.th * D2R), s = Math.sin(p.th * D2R), tau = Math.max(tauMin, tau0 * Math.pow(decay, it));
+    let a00 = 0, a01 = 0, a02 = 0, a11 = 0, a12 = 0, a22 = 0, b0 = 0, b1 = 0, b2 = 0, cnt = 0, sq = 0;
+    for (let i = 0; i < n; i++) {
+      const px = pts[2 * i], py = pts[2 * i + 1], wx = c * px - s * py + p.x, wy = s * px + c * py + p.y;
+      if (!corr(wx, wy, out, tau)) continue;
+      const r = out.nx * (wx - out.qx) + out.ny * (wy - out.qy);
+      if (Math.abs(r) > tau) continue;
+      const w = 1 / (1 + (r / (0.5 * tau)) * (r / (0.5 * tau))), jx = out.nx, jy = out.ny, jt = -out.nx * (wy - p.y) + out.ny * (wx - p.x);
+      a00 += w * jx * jx; a01 += w * jx * jy; a02 += w * jx * jt; a11 += w * jy * jy; a12 += w * jy * jt; a22 += w * jt * jt;
+      b0 -= w * jx * r; b1 -= w * jy * r; b2 -= w * jt * r; cnt++; sq += r * r;
+    }
+    evals += n; inl = cnt; rms = cnt ? Math.sqrt(sq / cnt) : 0;
+    if (cnt < minIn) break;
+    const lam = 1e-6 * (a00 + a11 + a22) + 1e-9;
+    const m00 = a00 + lam, m11 = a11 + lam, m22 = a22 + lam;                // résolution 3x3 (Cramer)
+    const det = m00 * (m11 * m22 - a12 * a12) - a01 * (a01 * m22 - a12 * a02) + a02 * (a01 * a12 - m11 * a02);
+    if (Math.abs(det) < 1e-18) break;
+    let dx = (b0 * (m11 * m22 - a12 * a12) - a01 * (b1 * m22 - a12 * b2) + a02 * (b1 * a12 - m11 * b2)) / det;
+    let dy = (m00 * (b1 * m22 - a12 * b2) - b0 * (a01 * m22 - a12 * a02) + a02 * (a01 * b2 - b1 * a02)) / det;
+    let dt = (m00 * (m11 * b2 - b1 * a12) - a01 * (a01 * b2 - b1 * a02) + b0 * (a01 * a12 - m11 * a02)) / det;
+    const sc = Math.min(1, 0.3 / Math.max(Math.hypot(dx, dy), 1e-12), 0.35 / Math.max(Math.abs(dt), 1e-12));
+    dx *= sc; dy *= sc; dt *= sc;
+    p.x += dx; p.y += dy; p.th += dt * R2D;
+    if (Math.hypot(dx, dy) < 1e-4 && Math.abs(dt) < 1e-4 && tau <= tauMin + 1e-12) { it++; break; }
+  }
+  return { pose: { x: p.x, y: p.y, th: wrapDeg(p.th) }, iters: it, evals, inliers: inl, rms };
+}
+/* ICP point à point (solution directe de Procuste en 2D à chaque tour). index : PointIndex des points de référence. */
+function icpPoint(pts, init, index, o = {}) {
+  const maxIter = o.maxIter ?? 60, tau0 = o.tau0 ?? 0.6, tauMin = o.tauMin ?? 0.15, decay = o.decay ?? 0.85, minIn = o.minInliers ?? 8;
+  const n = pts.length / 2, out = {}, P = index.P;
+  let p = { x: init.x, y: init.y, th: init.th }, it = 0, inl = 0, rms = 0, evals = 0;
+  for (; it < maxIter; it++) {
+    const c = Math.cos(p.th * D2R), s = Math.sin(p.th * D2R), tau = Math.max(tauMin, tau0 * Math.pow(decay, it));
+    const wxs = [], wys = [], qxs = [], qys = [];
+    for (let i = 0; i < n; i++) {
+      const px = pts[2 * i], py = pts[2 * i + 1], wx = c * px - s * py + p.x, wy = s * px + c * py + p.y;
+      const k = index.nearest(wx, wy, tau, out);
+      if (k < 0) continue;
+      wxs.push(wx); wys.push(wy); qxs.push(P[2 * k]); qys.push(P[2 * k + 1]);
+    }
+    const m = wxs.length; evals += n; inl = m;
+    if (m < minIn) break;
+    let pcx = 0, pcy = 0, qcx = 0, qcy = 0;
+    for (let i = 0; i < m; i++) { pcx += wxs[i]; pcy += wys[i]; qcx += qxs[i]; qcy += qys[i]; }
+    pcx /= m; pcy /= m; qcx /= m; qcy /= m;
+    let sxx = 0, sxy = 0, syx = 0, syy = 0, sq = 0;
+    for (let i = 0; i < m; i++) {
+      const ax = wxs[i] - pcx, ay = wys[i] - pcy, bx = qxs[i] - qcx, by = qys[i] - qcy;
+      sxx += ax * bx; sxy += ax * by; syx += ay * bx; syy += ay * by;
+    }
+    const dt = Math.atan2(sxy - syx, sxx + syy), cd = Math.cos(dt), sd = Math.sin(dt);
+    const tx = qcx - (cd * pcx - sd * pcy), ty = qcy - (sd * pcx + cd * pcy);      // T(w) = R(dt) w + t
+    for (let i = 0; i < m; i++) { const rx = cd * wxs[i] - sd * wys[i] + tx - qxs[i], ry = sd * wxs[i] + cd * wys[i] + ty - qys[i]; sq += rx * rx + ry * ry; }
+    rms = Math.sqrt(sq / m);
+    p = { x: cd * p.x - sd * p.y + tx, y: sd * p.x + cd * p.y + ty, th: p.th + dt * R2D };
+    if (Math.hypot(tx, ty) < 1e-4 && Math.abs(dt) < 1e-4 && tau <= tauMin + 1e-12) { it++; break; }
+  }
+  return { pose: { x: p.x, y: p.y, th: wrapDeg(p.th) }, iters: it, evals, inliers: inl, rms };
+}
+
+/* ---------- préparation des trois références pour un scan testé ---------- */
+/* refs : [{name, scan, pose}] (tous les AUTRES scans, à leur vérité terrain). test : {scan, truth}. */
+function prepareLocalisation(refs, test, o = {}) {
+  const L = { test, testPts: localPoints(test.scan), prep: {}, refs: refs.length };
+  let t0 = nowMs();
+  if (refs.length) {                                              // A : grille d'occupation construite avec les autres scans
+    const sc = refs.map(r => Object.assign({}, r.scan, { pose: r.pose }));
+    const g = gridForScans(sc, o.res ?? 0.05, 0.5, o.gridOpts || {});
+    for (const s of sc) g.update(s, s.pose);
+    L.grid = g; L.fieldGrid = fieldFromGrid(g);
+  }
+  L.prep.grid = nowMs() - t0; t0 = nowMs();
+  if (refs.length) {                                              // B : carte vectorielle (segments des autres scans)
+    const vm = new VectorMap(o.vmOpts || {});
+    for (const r of refs) vm.addSegments(extractSegments(localPoints(r.scan), o.segOpts || {}).map(sg => segToWorld(sg, r.pose)));
+    vm.prune(o.minWeight ?? 1);
+    L.vmap = vm; L.segs = vm.segments; L.segArr = segArrays(vm.segments);
+  }
+  L.prep.vec = nowMs() - t0; t0 = nowMs();
+  if (refs.length) {                                              // C : un seul scan de référence, le plus proche (ou celui demandé)
+    let ref = o.refName ? refs.find(r => r.name === o.refName) : null;
+    if (!ref) ref = refs.slice().sort((a, b) => Math.hypot(a.pose.x - test.truth.x, a.pose.y - test.truth.y) - Math.hypot(b.pose.x - test.truth.x, b.pose.y - test.truth.y))[0];
+    const P = worldPoints(ref.scan, ref.pose);
+    const loc = localPoints(ref.scan), N = scanNormals(loc), cr = Math.cos(ref.pose.th * D2R), sr = Math.sin(ref.pose.th * D2R), NW = new Float64Array(N.length);
+    for (let i = 0; i < N.length; i += 2) { NW[i] = cr * N[i] - sr * N[i + 1]; NW[i + 1] = sr * N[i] + cr * N[i + 1]; }
+    L.refScan = { name: ref.name, pose: ref.pose, P, N: NW, index: new PointIndex(P), field: fieldFromPoints(P, o.scanRes ?? 0.02) };
+  }
+  L.prep.scan = nowMs() - t0;
+  return L;
+}
+
+/* ---------- les méthodes ---------- */
+const LOC_TYPES = {
+  grid: { label: 'Carte d’occupation', short: 'Grille', methods: [['brute', 'Force brute'], ['multires', 'Multi-résolution'], ['mc', 'Filtre à particules'], ['gd', 'Descente de gradient']] },
+  vec: { label: 'Carte vectorielle', short: 'Vectorielle', methods: [['icp', 'ICP point-à-ligne'], ['brute', 'Force brute'], ['multires', 'Multi-résolution'], ['mc', 'Filtre à particules'], ['gd', 'Descente de gradient']] },
+  scan: { label: 'Scan à scan', short: 'Scan à scan', methods: [['icp', 'ICP point-à-point'], ['icpl', 'ICP point-à-ligne'], ['brute', 'Corrélation (force brute)'], ['multires', 'Multi-résolution'], ['mc', 'Filtre à particules']] },
+};
+const locAvailable = (L, type) => type === 'grid' ? !!L.fieldGrid : type === 'vec' ? !!(L.segs && L.segs.length) : !!(L.refScan && L.refScan.field);
+
+/* Une localisation : renvoie la pose estimée, le temps de calcul (ms) et le nombre d'évaluations/itérations. */
+function localise(L, type, method, init, o = {}) {
+  const win = o.win || { xy: 0.6, th: 20 }, rng = makeRng(o.seed ?? 1);
+  const t0 = nowMs();
+  let r;
+  if (type === 'vec' && method === 'icp') {
+    const A = L.segArr;
+    r = icpLine(L.testPts, init, (wx, wy, out, tau) => {
+      const k = nearestSeg(A, wx, wy, out);
+      if (k < 0 || out.d2 > 6.25 * tau * tau) return false;
+      out.nx = A.nx[k]; out.ny = A.ny[k]; return true;
+    }, o.icp);
+  } else if (type === 'scan' && method === 'icp') {
+    r = icpPoint(L.testPts, init, L.refScan.index, o.icp);
+  } else if (type === 'scan' && method === 'icpl') {
+    const R = L.refScan, tmp = {};
+    r = icpLine(L.testPts, init, (wx, wy, out, tau) => {
+      const k = R.index.nearest(wx, wy, tau, tmp);
+      if (k < 0 || Number.isNaN(R.N[2 * k])) return false;
+      out.qx = R.P[2 * k]; out.qy = R.P[2 * k + 1]; out.nx = R.N[2 * k]; out.ny = R.N[2 * k + 1]; return true;
+    }, o.icp);
+  } else {
+    const score = type === 'grid' ? makeFieldScorer(L.fieldGrid, L.testPts) : type === 'vec' ? makeSegScorer(L.segArr, L.testPts) : makeFieldScorer(L.refScan.field, L.testPts);
+    if (method === 'brute') r = searchBrute(score, init, win, o.brute);
+    else if (method === 'multires') r = searchMulti(score, init, win, o.multi);
+    else if (method === 'mc') r = searchParticles(score, init, win, { rng, ...(o.mc || {}) });
+    else if (method === 'gd') r = searchGradient(score, init, o.gd);
+    else throw new Error('méthode inconnue : ' + type + '/' + method);
+  }
+  return { pose: r.pose, ms: nowMs() - t0, evals: r.evals || 0, iters: r.iters || 0, score: r.score ?? null, inliers: r.inliers ?? null, rms: r.rms ?? null };
+}
+
+/* ---------- statistiques d'un lot d'essais ---------- */
+const median = a => { if (!a.length) return NaN; const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+const isSuccess = (err, thr) => err.pos <= thr.pos && err.ang <= thr.ang;
+/* rows : [{pos, ang, ms}] ; thr : {pos (m), ang (°)} */
+function summarize(rows, thr) {
+  const n = rows.length, ok = rows.filter(r => isSuccess(r, thr));
+  const ms = rows.map(r => r.ms), fin = rows.filter(r => isFinite(r.pos));
+  return {
+    n, success: ok.length, rate: n ? ok.length / n : NaN,
+    medPos: median(fin.map(r => r.pos)), medAng: median(fin.map(r => r.ang)),
+    medPosOk: median(ok.map(r => r.pos)), medAngOk: median(ok.map(r => r.ang)),
+    meanMs: n ? ms.reduce((a, b) => a + b, 0) / n : NaN, maxMs: n ? Math.max(...ms) : NaN,
+  };
+}
 /* CORE-END */
+
 /* ======================================================================
    APPLICATION (interface, série, dessin)
    ====================================================================== */
@@ -1131,7 +1778,7 @@ const state = {
   connState: 'idle', portLabel: '', bytes: 0, gotScan: false, monText: '', monDirty: false, timers: [],
   simTimer: null, scanTimes: [], liveSegs: [], rebuildTimer: null, colorIdx: 0, mapMsg: '', currentStep: undefined,
 };
-const flags = { everConnected: false, mapSeen: false, gridSeen: false, posed: false, tuned: false, exported: false };
+const flags = { everConnected: false, mapSeen: false, gridSeen: false, posed: false, tuned: false, exported: false, locRun: false };
 const cv = $('cv'), ctx = cv.getContext('2d');
 let W = 0, H = 0, dpr = 1;
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -1158,8 +1805,8 @@ const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
 /* ======================================================================
    CHRONOLOGIE : état de chaque étape, résumés, ouverture automatique
    ====================================================================== */
-const STEPS = ['connect', 'capture', 'place', 'maps', 'grid', 'export'];
-const OPTIONAL = new Set(['maps']);
+const STEPS = ['connect', 'capture', 'place', 'maps', 'grid', 'loc', 'export'];
+const OPTIONAL = new Set(['maps', 'loc']);
 const stepEl = k => document.querySelector(`.step[data-step="${k}"]`);
 
 function stepDone() {
@@ -1170,6 +1817,7 @@ function stepDone() {
     place: flags.mapSeen && n > 0 && (flags.posed || n === 1),
     maps: (flags.tuned || flags.exported) && n > 0,
     grid: flags.gridSeen && n > 0,
+    loc: flags.locRun,
     export: flags.exported && n > 0,
   };
 }
@@ -1185,6 +1833,7 @@ function stepSummaries() {
     place: n ? (flags.mapSeen && (flags.posed || n === 1) ? 'Poses réglées sur la carte' : n === 1 ? 'Un seul scan : rien à aligner' : 'Alignez les scans sur la carte') : 'Après la première capture',
     maps: state.vmap ? `${plural(state.vmap.segments.length, 'segment', 'segments')} · grille ${state.grid.nx}×${state.grid.ny}` : 'Valeurs par défaut',
     grid: flags.gridSeen && state.gridStats ? `${state.gridStats.flt.occ} cellules occupées · ${state.gridStats.flt.iso} isolées` : 'Juger le filtre avec un curseur',
+    loc: locSummary(),
     export: flags.exported ? 'lidar_export.zip enregistré' : 'Fichiers pour le TP',
   };
 }
@@ -1423,11 +2072,7 @@ function ingest(rows) {
 const parser = new LidarParser(ingest, { teleFlipY: true });
 
 /* ---------- simulation (salle 6 x 4 m, pilier, meuble) ---------- */
-const WALLS = [
-  [0, 0, 6, 0], [6, 0, 6, 4], [6, 4, 0, 4], [0, 4, 0, 0],
-  [3, 2, 3.5, 2], [3.5, 2, 3.5, 2.5], [3.5, 2.5, 3, 2.5], [3, 2.5, 3, 2],
-  [1, 0, 1, 0.6], [1, 0.6, 2.2, 0.6], [2.2, 0.6, 2.2, 0],
-];
+const WALLS = SIM_WALLS;                         // même salle que le banc d'essai de localisation
 function gauss() { return Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random()); }
 function simulateRows(pose, n = 450) {
   const rows = [];
@@ -1518,6 +2163,7 @@ function renderScanList() {
   box.innerHTML = '';
   if (!state.scans.length) {
     box.innerHTML = '<div class="empty-list">Aucun scan pour l’instant.</div>';
+    if (typeof locRefreshSelects === 'function') locRefreshSelects();
     return;
   }
   state.scans.forEach((s, i) => {
@@ -1547,6 +2193,7 @@ function renderScanList() {
     });
     box.appendChild(el);
   });
+  if (typeof locRefreshSelects === 'function') locRefreshSelects();
 }
 function touchPose() { if (!flags.posed) { flags.posed = true; updateTimeline(); } }
 function refreshPoseInputs() {
@@ -1867,7 +2514,7 @@ function drawGrid() {
 
 function draw() {
   drawBackground();
-  if (state.tab === 'live') drawLive(); else if (state.tab === 'grid') drawGrid(); else drawMap();
+  if (state.tab === 'live') drawLive(); else if (state.tab === 'grid') drawGrid(); else if (state.tab === 'loc') drawLoc(); else drawMap();
 }
 
 /* ---------- pastille de connexion, HUD, écran vide ---------- */
@@ -1940,6 +2587,8 @@ function updateChrome() {
     hud.hidden = false;
     hud.innerHTML = `<span><b>${vis}</b>${vis > 1 ? 'scans' : 'scan'}</span>` +
       (state.vmap ? `<span><b>${state.vmap.segments.length}</b>segments</span><span><b>${state.grid.nx}×${state.grid.ny}</b>cellules</span>` : '');
+  } else if (state.tab === 'loc') {
+    hud.innerHTML = locLegendHtml(); hud.hidden = !hud.innerHTML;
   } else hud.hidden = true;
   $('cmpBar').hidden = !(state.tab === 'grid' && state.scans.length);
   renderGridStats();
@@ -1950,6 +2599,7 @@ function updateChrome() {
 /* ---------- vue : ajuster, zoom, déplacement ---------- */
 function fitView() {
   if (state.tab === 'live') { state.view.live.auto = true; draw(); return; }
+  if (state.tab === 'loc') { locFitView(); return; }
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const s of state.scans) {
     if (!s.visible) continue;
@@ -2031,11 +2681,16 @@ function setTab(t) {
   $('tabLive').setAttribute('aria-selected', t === 'live');
   $('tabMap').setAttribute('aria-selected', t === 'map');
   $('tabGrid').setAttribute('aria-selected', t === 'grid');
+  $('tabLoc').setAttribute('aria-selected', t === 'loc');
+  $('locOpts').style.display = t === 'loc' ? 'flex' : 'none';
+  $('locPanel').hidden = t !== 'loc';
   $('liveOpts').style.display = t === 'live' ? 'flex' : 'none';
   $('mapOpts').style.display = t === 'map' ? 'flex' : 'none';
   $('gridOpts').style.display = t === 'grid' ? 'flex' : 'none';
   $('cmpBar').hidden = !(t === 'grid' && state.scans.length);
-  if (t === 'map' || t === 'grid') {
+  if (t === 'loc') {
+    locEnter();
+  } else if (t === 'map' || t === 'grid') {
     if (state.scans.length) { if (t === 'map') flags.mapSeen = true; else flags.gridSeen = true; }
     if ($('autoBuild').checked) rebuild();
     fitView();
@@ -2045,6 +2700,8 @@ function setTab(t) {
 $('tabLive').onclick = () => setTab('live');
 $('tabMap').onclick = () => setTab('map');
 $('tabGrid').onclick = () => setTab('grid');
+$('tabLoc').onclick = () => setTab('loc');
+$('btnGoLoc').onclick = () => setTab('loc');
 $('btnGoGrid').onclick = () => setTab('grid');
 $('btnGoMap').onclick = () => setTab('map');
 
@@ -2116,6 +2773,7 @@ async function exportZip() {
   add('projet.json', JSON.stringify(projectObject()) + '\n');
   if (state.vmap) add('carte_vectorielle.txt', vectorMapToTxt(state.vmap.segments));
   if (state.grid) add('grille.csv', gridToCSV(state.grid));
+  if (loc.log.length) add('localisation_resultats.csv', locCsv());
   const png = await canvasPngBlob();
   if (png) files.push({ name: 'carte.png', data: new Uint8Array(await png.arrayBuffer()) });
   download('lidar_export.zip', new Blob(makeZipParts(files), { type: 'application/zip' }));
@@ -2191,6 +2849,421 @@ syncFilterUi();
 ['gridRes', 'gridRes2'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === '.' || e.key === ',' || e.key === 'e') e.preventDefault(); }));   // pas de décimale
 document.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('change', () => { cv.style.cursor = r.value === 'scan' ? 'move' : 'grab'; }));
 $('autoBuild').addEventListener('change', () => { if ($('autoBuild').checked) rebuild(); });
+
+/* ======================================================================
+   JOUR 2 : LOCALISATION (interface : données, essais, tableaux, courbe, dessin)
+   Le calcul est dans le noyau (prepareLocalisation, localise, summarize).
+   ====================================================================== */
+const LOC_COLORS = { icp: 'hsl(18 85% 52%)', icpl: 'hsl(42 90% 44%)', brute: 'hsl(210 72% 52%)', multires: 'hsl(280 55% 58%)', mc: 'hsl(150 55% 40%)', gd: 'hsl(340 70% 55%)' };
+const locColor = key => LOC_COLORS[key.split('/')[1]] || 'gray';
+const locLabel = key => { const [t, m] = key.split('/'); return (LOC_TYPES[t].methods.find(x => x[0] === m) || [0, m])[1]; };
+const loc = {
+  truth: null, truthLabel: '',                 // vérité terrain figée / importée (mode « mes scans »)
+  cache: { key: '', data: [], L: new Map() },  // jeu de données et préparations des cartes
+  res: { one: null, multi: null, sweep: null },
+  panel: 'one', show: {}, log: [], running: false, abort: false, imgs: new WeakMap(),
+};
+state.view.loc = { cx: 3, cy: 2, s: 80 };
+const locType = () => document.querySelector('input[name=ltype]:checked').value;
+const locSrc = () => document.querySelector('input[name=locSrc]:checked').value;
+const tick = () => new Promise(r => setTimeout(r, 0));
+
+function locParams() {
+  const num = (id, d, lo = -Infinity, hi = Infinity) => { const v = parseFloat(String($(id).value).replace(',', '.')); return isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
+  const methods = [...document.querySelectorAll('input[data-loc]')].filter(c => c.checked).map(c => c.dataset.loc);
+  return {
+    src: locSrc(), noise: num('locNoise', 1, 0, 10) / 100, outl: num('locOutl', 3, 0, 30) / 100, seed: Math.round(num('locSeed', 7, 1, 99999)),
+    dx: num('locDx', 0), dy: num('locDy', 0), dth: num('locDth', 0),
+    win: { xy: num('locWinXY', 0.5, 0.05, 3), th: num('locWinTh', 15, 1, 90) }, thr: { pos: num('locThrPos', 0.05, 0.001, 1), ang: num('locThrAng', 2, 0.05, 45) },
+    cell: Math.round(num('locCell', 50, 10, 200)), nMulti: Math.round(num('locN', 20, 2, 500)),
+    swRho: num('locSwRho', 1, 0.1, 3), swDeg: num('locSwDeg', 30, 1, 180), swN: Math.round(num('locSwN', 6, 2, 50)),
+    test: $('locTest').value, ref: $('locRef').value, methods,
+  };
+}
+
+/* ---------- données de test ---------- */
+function locDataset(P) {
+  let key, build;
+  const cp = cleanOn() ? JSON.stringify(cleanParams()) : 'brut';
+  if (P.src === 'bench') {
+    key = ['b', P.seed, P.noise, P.outl, cp].join('|');
+    build = () => {
+      let d = benchDataset(P.seed, { noise: P.noise, outliers: P.outl });
+      if (cleanOn()) d = d.map(e => ({ ...e, scan: Object.assign(filterScan(e.scan, cleanParams()), { pose: e.truth }) }));
+      return d;
+    };
+  } else {
+    const vis = state.scans.filter(s => s.visible);
+    const items = vis.map(s => ({ name: s.name, scan: mapScan(s), truth: loc.truth && loc.truth[s.name] ? { ...loc.truth[s.name] } : { ...s.pose } }));
+    key = ['p', cp, $('optConfirm').checked, items.map(e => e.name + ':' + e.truth.x.toFixed(3) + ',' + e.truth.y.toFixed(3) + ',' + e.truth.th.toFixed(2) + ':' + e.scan.ranges.length).join(';')].join('|');
+    build = () => items;
+  }
+  if (loc.cache.key !== key) loc.cache = { key, data: build(), L: new Map() };
+  return loc.cache.data;
+}
+function locPickTest(P, data) {
+  return data.find(d => d.name === P.test) || data[0];
+}
+function locL(P, data, test) {
+  const refName = P.ref !== 'auto' && P.ref !== test.name ? P.ref : null;
+  const key = [test.name, P.cell, refName, $('angTol').value, $('distTol').value, $('gapTol').value, $('minWeight').value].join('|');
+  let L = loc.cache.L.get(key);
+  if (!L) {
+    const refs = data.filter(d => d !== test).map(d => ({ name: d.name, scan: d.scan, pose: d.truth }));
+    L = prepareLocalisation(refs, { scan: test.scan, truth: test.truth }, {
+      res: P.cell / 1000, refName, minWeight: +$('minWeight').value || 1,
+      vmOpts: { angTolDeg: +$('angTol').value || 10, distTol: +$('distTol').value || 0.06, gapTol: +$('gapTol').value || 0.15 },
+    });
+    loc.cache.L.set(key, L);
+  }
+  return L;
+}
+
+/* ---------- menus, vérité terrain ---------- */
+function locRefreshSelects() {
+  const P = { src: locSrc() };
+  const names = P.src === 'bench' ? BENCH_POSES.map((_, i) => 'sim_' + String(i).padStart(2, '0')) : state.scans.filter(s => s.visible).map(s => s.name);
+  const fill = (sel, first, keep) => {
+    const cur = $(sel).value; $(sel).innerHTML = first + names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    $(sel).value = [...$(sel).options].some(o => o.value === cur) ? cur : keep;
+  };
+  fill('locTest', '<option value="all">Tous (essais multiples)</option>', names[0] ?? 'all');
+  fill('locRef', '<option value="auto">Le plus proche (auto)</option>', 'auto');
+  $('locBenchBox').hidden = P.src !== 'bench';
+  $('locTruthBox').hidden = P.src === 'bench';
+  $('btnLocFreeze').textContent = loc.truth ? 'Libérer la vérité terrain' : 'Figer les poses actuelles';
+  $('locTruthInfo').textContent = loc.truth ? `Vérité terrain : ${loc.truthLabel}. Déplacer les scans ensuite ne la change pas.`
+    : 'Vérité terrain : les poses de la liste (étape 3). Elles sont aussi précises que ton placement : figer les poses permet de les modifier sans fausser les mesures.';
+}
+document.querySelectorAll('input[name=locSrc]').forEach(r => r.addEventListener('change', () => { locRefreshSelects(); locInvalidate(); }));
+$('btnLocFreeze').onclick = () => {
+  if (loc.truth) { loc.truth = null; loc.truthLabel = ''; } else {
+    loc.truth = {}; for (const s of state.scans) loc.truth[s.name] = { ...s.pose };
+    loc.truthLabel = `poses figées (${plural(state.scans.length, 'scan', 'scans')})`;
+  }
+  locRefreshSelects(); locInvalidate();
+};
+$('btnLocTruth').onclick = () => $('fileLocTruth').click();
+$('fileLocTruth').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try {
+    const data = JSON.parse(await f.text()), t = {};
+    for (const [name, v] of Object.entries(data)) {
+      const p = Array.isArray(v) ? { x: +v[0], y: +v[1], th: +v[2] } : { x: +v.x, y: +v.y, th: +(v.th ?? v.theta ?? 0) };
+      if ([p.x, p.y, p.th].every(isFinite)) t[name] = p;
+    }
+    if (!Object.keys(t).length) throw new Error('aucune pose');
+    loc.truth = t; loc.truthLabel = `${f.name} (${plural(Object.keys(t).length, 'pose', 'poses')})`;
+    document.querySelector('input[name=locSrc][value=project]').checked = true;
+    locRefreshSelects(); locInvalidate(); toast('Vérité terrain importée');
+  } catch (err) { toast('poses.json illisible : ' + err.message); }
+};
+function locInvalidate() { loc.res = { one: null, multi: null, sweep: null }; loc.log = []; loc.show = {}; if (state.tab === 'loc') { renderLocPanel(); draw(); updateChrome(); } }
+['locNoise', 'locOutl', 'locSeed', 'locCell', 'locRef', 'locTest'].forEach(id => $(id).addEventListener('change', () => { if (id !== 'locTest' && id !== 'locRef') locInvalidate(); else { loc.res.one = null; renderLocPanel(); draw(); updateChrome(); } }));
+['locDx', 'locDy', 'locDth'].forEach(id => $(id).addEventListener('input', () => { if (state.tab === 'loc') draw(); }));
+document.querySelectorAll('input[name=ltype]').forEach(r => r.addEventListener('change', () => { renderLocPanel(); draw(); updateChrome(); }));
+$('locShowPts').addEventListener('change', draw);
+$('btnLocZero').onclick = () => { $('locDx').value = 0; $('locDy').value = 0; $('locDth').value = 0; if (state.tab === 'loc') draw(); };
+$('btnLocRand').onclick = () => {
+  const P = locParams(), r = () => 2 * Math.random() - 1;
+  $('locDx').value = fmt(r() * P.win.xy * 0.8, 2); $('locDy').value = fmt(r() * P.win.xy * 0.8, 2); $('locDth').value = fmt(r() * P.win.th * 0.8, 1);
+  if (state.tab === 'loc') draw();
+};
+
+/* ---------- affichage du résumé de l'étape ---------- */
+function locSummary() {
+  const r = loc.res, n = (r.one ? Object.keys(r.one.rows).length : 0);
+  if (r.sweep) return `Sensibilité : ${plural(r.sweep.methods.length, 'méthode', 'méthodes')}`;
+  if (r.multi) return `${plural(r.multi.nTrials, 'essai', 'essais')} · ${plural(r.multi.methods.length, 'méthode', 'méthodes')}`;
+  if (r.one) return `${plural(n, 'méthode comparée', 'méthodes comparées')}`;
+  return 'Retrouver la pose d’un scan : 3 types de cartes';
+}
+
+/* ---------- lancer les calculs ---------- */
+function locPrep() {
+  const P = locParams(), data = locDataset(P);
+  if (data.length < 2) { setStatus('locStatus', P.src === 'bench' ? 'Banc d’essai indisponible.' : 'Il faut au moins 2 scans visibles : un à localiser et au moins un pour la carte de référence.', 'err'); return null; }
+  if (!P.methods.length) { setStatus('locStatus', 'Cochez au moins une méthode.', 'err'); return null; }
+  return { P, data };
+}
+function locBusy(on, total = 1) {
+  loc.running = on; loc.abort = false;
+  ['btnLocOne', 'btnLocMulti', 'btnLocSweep'].forEach(id => { $(id).disabled = on; });
+  $('btnLocStop').hidden = !on; $('locProg').hidden = !on; $('locProg').max = total; $('locProg').value = 0;
+}
+const locProgress = (done, text) => { $('locProg').value = done; setStatus('locStatus', text); };
+function locShowDefaults(P) {
+  const t = locType();
+  loc.show = {};
+  for (const k of P.methods) loc.show[k] = k.startsWith(t + '/');
+}
+function locFinish(panel) {
+  flags.locRun = true; loc.panel = panel;
+  if (state.tab !== 'loc') setTab('loc'); else { renderLocPanel(); draw(); updateChrome(); }
+  updateTimeline();
+}
+/* essais : tous les scans de test à tour de rôle, une pose initiale tirée par essai, partagée par toutes les méthodes */
+async function locTrials(P, data, levels, per) {
+  const tests = P.test === 'all' ? data : [locPickTest(P, data)];
+  const rng = makeRng(P.seed * 7919 + 13), rho0 = Math.hypot(P.dx, P.dy), dlt0 = Math.abs(P.dth);
+  const total = levels.length * per * P.methods.length;
+  locBusy(true, total);
+  const out = levels.map(() => Object.fromEntries(P.methods.map(k => [k, []])));
+  let done = 0;
+  for (let li = 0; li < levels.length && !loc.abort; li++) {
+    const f = levels[li], rho = f.rho ?? rho0 * (f.k ?? 1), dlt = f.deg ?? dlt0 * (f.k ?? 1);
+    for (let t = 0; t < per && !loc.abort; t++) {
+      const test = tests[t % tests.length], L = locL(P, data, test), off = randomOffset(rho, dlt, rng), init = offsetPose(test.truth, off.dx, off.dy, off.dth);
+      for (let mi = 0; mi < P.methods.length && !loc.abort; mi++) {
+        const key = P.methods[mi], [type, id] = key.split('/');
+        done++;
+        if (!locAvailable(L, type)) continue;
+        locProgress(done, `${done}/${total} · ${locLabel(key)} (${LOC_TYPES[type].short})`);
+        await tick();
+        const r = localise(L, type, id, init, { win: P.win, seed: P.seed * 1000 + li * 97 + t * 13 + mi });
+        const e = poseError(r.pose, test.truth);
+        out[li][key].push({ ...e, ms: r.ms, init: Math.hypot(off.dx, off.dy), initDeg: Math.abs(off.dth) });
+        loc.log.push({ essai: li * per + t, scan: test.name, type, methode: id, rho, dlt, ...e, ms: r.ms, ok: isSuccess(e, P.thr) });
+      }
+    }
+  }
+  const aborted = loc.abort; locBusy(false);
+  return { out, aborted, tests: tests.map(t => t.name) };
+}
+
+async function locRunOne() {
+  const prep = locPrep(); if (!prep) return;
+  const { P, data } = prep, test = locPickTest(P, data), L = locL(P, data, test);
+  const init = offsetPose(test.truth, P.dx, P.dy, P.dth), rows = {};
+  loc.log = []; locBusy(true, P.methods.length);
+  for (let i = 0; i < P.methods.length && !loc.abort; i++) {
+    const key = P.methods[i], [type, id] = key.split('/');
+    locProgress(i, `${locLabel(key)} (${LOC_TYPES[type].short})…`);
+    await tick();
+    if (!locAvailable(L, type)) { rows[key] = { na: true }; continue; }
+    const r = localise(L, type, id, init, { win: P.win, seed: P.seed * 1000 + i });
+    const e = poseError(r.pose, test.truth);
+    rows[key] = { ...r, ...e, ok: isSuccess(e, P.thr) };
+    loc.log.push({ essai: 0, scan: test.name, type, methode: id, rho: Math.hypot(P.dx, P.dy), dlt: Math.abs(P.dth), ...e, ms: r.ms, ok: rows[key].ok });
+  }
+  const aborted = loc.abort; locBusy(false);
+  loc.res.one = { P, testName: test.name, truth: test.truth, init, rows, L, initErr: poseError(init, test.truth), refName: L.refScan ? L.refScan.name : '' };
+  locShowDefaults(P);
+  setStatus('locStatus', aborted ? 'Arrêté.' : `${plural(Object.keys(rows).length, 'méthode comparée', 'méthodes comparées')} sur ${test.name}.`, aborted ? 'warn' : 'ok');
+  locFinish('one');
+}
+async function locRunMulti() {
+  const prep = locPrep(); if (!prep) return;
+  const { P, data } = prep;
+  if (Math.hypot(P.dx, P.dy) === 0 && P.dth === 0) { setStatus('locStatus', 'Écart initial nul : donnez un Δx, Δy ou Δθ non nul (sa taille sert d’amplitude).', 'warn'); return; }
+  loc.log = [];
+  const { out, aborted, tests } = await locTrials(P, data, [{ k: 1 }], P.nMulti);
+  const rows = out[0], summ = {};
+  for (const k of P.methods) summ[k] = summarize(rows[k], P.thr);
+  const n = Math.max(...P.methods.map(k => rows[k].length));
+  loc.res.multi = { P, summ, nTrials: n, methods: P.methods, tests, rho: Math.hypot(P.dx, P.dy), dlt: Math.abs(P.dth) };
+  locShowDefaults(P);
+  setStatus('locStatus', aborted ? 'Arrêté : résultats partiels.' : `${plural(n, 'essai', 'essais')} par méthode.`, aborted ? 'warn' : 'ok');
+  locFinish('multi');
+}
+async function locRunSweep() {
+  const prep = locPrep(); if (!prep) return;
+  const { P, data } = prep;
+  const fr = [0, 0.1, 0.2, 0.35, 0.5, 0.75, 1], levels = fr.map(f => ({ rho: f * P.swRho, deg: f * P.swDeg }));
+  loc.log = [];
+  const { out, aborted } = await locTrials(P, data, levels, P.swN);
+  const rates = {}, times = {};
+  for (const k of P.methods) {
+    rates[k] = out.map(row => row[k].length ? summarize(row[k], P.thr).rate : NaN);
+    const all = out.flatMap(row => row[k]); times[k] = all.length ? all.reduce((a, r) => a + r.ms, 0) / all.length : NaN;
+  }
+  loc.res.sweep = { P, levels, rates, times, methods: P.methods, per: P.swN, rate: Object.fromEntries(P.methods.map(k => [k, summarize(out.flatMap(row => row[k]), P.thr).rate])) };
+  locShowDefaults(P);
+  setStatus('locStatus', aborted ? 'Arrêté : courbes partielles.' : `${levels.length} niveaux × ${P.swN} essais × ${plural(P.methods.length, 'méthode', 'méthodes')}.`, aborted ? 'warn' : 'ok');
+  locFinish('sens');
+}
+$('btnLocOne').onclick = locRunOne;
+$('btnLocMulti').onclick = locRunMulti;
+$('btnLocSweep').onclick = locRunSweep;
+$('btnLocStop').onclick = () => { loc.abort = true; };
+$('btnLocCsv').onclick = () => { if (!loc.log.length) { toast('Lancez d’abord un calcul'); return; } download('localisation_resultats.csv', locCsv(), 'text/csv'); };
+function locCsv() {
+  const head = 'essai;scan;type;methode;ecart_init_m;ecart_init_deg;err_pos_m;err_angle_deg;temps_ms;reussi';
+  const f = (v, d) => isFinite(v) ? v.toFixed(d) : '';
+  return [head, ...loc.log.map(r => [r.essai, r.scan, r.type, r.methode, f(r.rho, 3), f(r.dlt, 2), f(r.pos, 4), f(r.ang, 3), f(r.ms, 2), r.ok ? 1 : 0].join(';'))].join('\n') + '\n';
+}
+
+/* ---------- panneau de résultats ---------- */
+const lpTabs = { one: 'lpOne', multi: 'lpMulti', sens: 'lpSens' };
+for (const [k, id] of Object.entries(lpTabs)) $(id).onclick = () => { loc.panel = k; renderLocPanel(); };
+const f3 = v => isFinite(v) ? v.toFixed(3) : '∞', f2 = v => isFinite(v) ? v.toFixed(2) : '∞';
+const rateCell = (s) => `<span class="rate"><span class="bar"><i style="width:${Math.round(100 * s.rate)}%"></i></span><b>${Math.round(100 * s.rate)} %</b> <small style="color:var(--muted)">${s.success}/${s.n}</small></span>`;
+function groupedKeys(methods) {
+  const out = [];
+  for (const t of Object.keys(LOC_TYPES)) { const ks = methods.filter(k => k.startsWith(t + '/')); if (ks.length) out.push([t, ks]); }
+  return out;
+}
+function methRow(key, cells) {
+  return `<tr class="meth${loc.show[key] ? '' : ' off'}" data-key="${key}" title="Cliquer pour afficher ou masquer ce résultat sur la carte"><td><span class="sw" style="--c:${locColor(key)}"></span>${esc(locLabel(key))}</td>${cells}</tr>`;
+}
+function renderLocPanel() {
+  for (const [k, id] of Object.entries(lpTabs)) $(id).setAttribute('aria-selected', loc.panel === k);
+  const body = $('lpBody'), cond = $('lpCond'), r = loc.res;
+  if (loc.panel === 'one') {
+    const o = r.one;
+    if (!o) { cond.textContent = ''; body.innerHTML = '<div class="lp-empty">Réglez la pose initiale (étape 6, à gauche), puis cliquez sur <b>Localiser</b> : chaque méthode cochée repart de la même pose et le tableau donne son erreur, son temps et sa réussite.</div>'; return; }
+    const th = o.P.thr;
+    cond.innerHTML = `Scan <b>${esc(o.testName)}</b> · écart initial ${f3(o.initErr.pos)} m / ${f2(o.initErr.ang)}° · réussite : erreur ≤ ${th.pos} m et ≤ ${th.ang}° · fenêtre ± ${o.P.win.xy} m / ± ${o.P.win.th}°`;
+    let h = `<table class="lp"><thead><tr><th>Méthode</th><th>Erreur position (m)</th><th>Erreur angle (°)</th><th>Temps (ms)</th><th>Évaluations / itérations</th><th>Résultat</th></tr></thead><tbody>`;
+    h += `<tr class="base"><td>Pose initiale (sans localisation)</td><td>${f3(o.initErr.pos)}</td><td>${f2(o.initErr.ang)}</td><td>–</td><td>–</td><td></td></tr>`;
+    const prep = { grid: o.L.prep.grid, vec: o.L.prep.vec, scan: o.L.prep.scan };
+    for (const [t, ks] of groupedKeys(Object.keys(o.rows))) {
+      const note = t === 'scan' ? `référence : ${esc(o.refName)}` : `carte construite avec les ${o.L.refs} autres scans`;
+      h += `<tr class="grp"><td colspan="6">${t === 'grid' ? 'A' : t === 'vec' ? 'B' : 'C'} · ${LOC_TYPES[t].label}<small>${note} · préparation ${Math.round(prep[t])} ms (non comptée)</small></td></tr>`;
+      for (const k of ks) {
+        const x = o.rows[k];
+        h += x.na ? methRow(k, '<td class="na" colspan="5">Référence indisponible (pas assez de données).</td>')
+          : methRow(k, `<td>${f3(x.pos)}</td><td>${f2(x.ang)}</td><td>${x.ms < 10 ? x.ms.toFixed(2) : x.ms.toFixed(1)}</td><td>${x.evals ? x.evals.toLocaleString('fr-FR') + ' éval.' : ''}${x.evals && x.iters ? ' · ' : ''}${x.iters ? x.iters + ' it.' : ''}</td><td><span class="badge ${x.ok ? 'ok' : 'ko'}">${x.ok ? 'réussi' : 'échec'}</span></td>`);
+      }
+    }
+    body.innerHTML = h + '</tbody></table><p class="lp-note">Une ligne cliquée s’affiche (ou se masque) sur la carte. Les méthodes locales (ICP, gradient) ne cherchent pas : elles descendent la pente depuis la pose initiale, donc elles échouent si elle est trop loin. La force brute ne regarde que sa fenêtre.</p>';
+  } else if (loc.panel === 'multi') {
+    const m = r.multi;
+    if (!m) { cond.textContent = ''; body.innerHTML = '<div class="lp-empty">Cliquez sur <b>Essais multiples</b> : même écart initial de taille fixe, direction tirée au hasard à chaque essai, scans testés à tour de rôle.</div>'; return; }
+    const th = m.P.thr;
+    cond.innerHTML = `${plural(m.nTrials, 'essai', 'essais')} par méthode sur ${m.tests.length > 1 ? 'tous les scans' : esc(m.tests[0])} · écart initial ${f2(m.rho)} m / ${f2(m.dlt)}° (direction aléatoire) · réussite : erreur ≤ ${th.pos} m et ≤ ${th.ang}°`;
+    let h = `<table class="lp"><thead><tr><th>Méthode</th><th>Taux de réussite</th><th>Erreur position médiane (m)</th><th>Erreur angle médiane (°)</th><th>Temps moyen (ms)</th><th>Temps max (ms)</th></tr></thead><tbody>`;
+    for (const [t, ks] of groupedKeys(m.methods)) {
+      h += `<tr class="grp"><td colspan="6">${t === 'grid' ? 'A' : t === 'vec' ? 'B' : 'C'} · ${LOC_TYPES[t].label}</td></tr>`;
+      for (const k of ks) { const s = m.summ[k]; h += methRow(k, s.n ? `<td>${rateCell(s)}</td><td>${f3(s.medPos)}</td><td>${f2(s.medAng)}</td><td>${s.meanMs.toFixed(1)}</td><td>${s.maxMs.toFixed(0)}</td>` : '<td class="na" colspan="5">Référence indisponible.</td>'); }
+    }
+    body.innerHTML = h + '</tbody></table><p class="lp-note">Les médianes portent sur tous les essais, échecs compris : une méthode qui échoue souvent a une médiane élevée. Le temps ne comprend pas la préparation de la carte.</p>';
+  } else {
+    const sw = r.sweep;
+    if (!sw) { cond.textContent = ''; body.innerHTML = '<div class="lp-empty">Cliquez sur <b>Courbe de sensibilité</b> : le taux de réussite est mesuré pour des écarts initiaux de plus en plus grands (de 0 jusqu’aux valeurs « Balayage » de l’étape 6).</div>'; return; }
+    const th = sw.P.thr, t = locType(), ks = sw.methods.filter(k => k.startsWith(t + '/'));
+    cond.innerHTML = `${sw.levels.length} niveaux × ${sw.per} essais · écart jusqu’à ${f2(sw.P.swRho)} m / ${f2(sw.P.swDeg)}° · réussite : erreur ≤ ${th.pos} m et ≤ ${th.ang}° · type affiché : <b>${LOC_TYPES[t].label}</b> (changez-le dans la barre d’outils)`;
+    body.innerHTML = `<div class="legend">${ks.map(k => `<span><span class="sw" style="--c:${locColor(k)}"></span>${esc(locLabel(k))} · ${Math.round(100 * sw.rate[k])} % · ${sw.times[k].toFixed(1)} ms</span>`).join('') || 'Aucune méthode de ce type n’a été lancée.'}</div><canvas id="lpChart"></canvas>
+      <p class="lp-note">Lecture : à gauche l’initialisation est parfaite, à droite elle est très mauvaise. Une courbe qui chute tôt = méthode sensible à l’initialisation. La force brute tombe à 0 dès que la vérité sort de sa fenêtre (± ${sw.P.win.xy} m, ± ${sw.P.win.th}°).</p>`;
+    drawSweepChart(sw, ks);
+  }
+}
+$('lpBody').addEventListener('click', e => {
+  const tr = e.target.closest('tr.meth'); if (!tr) return;
+  const k = tr.dataset.key; loc.show[k] = !loc.show[k];
+  tr.classList.toggle('off', !loc.show[k]); draw(); updateChrome();
+});
+function drawSweepChart(sw, ks) {
+  const c = $('lpChart'); if (!c) return;
+  const dpr = window.devicePixelRatio || 1, w = c.clientWidth || 600, h = 230;
+  c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+  const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const L = 44, R = 14, T = 10, B = 42, pw = w - L - R, ph = h - T - B, n = sw.levels.length;
+  const X = i => L + pw * i / (n - 1), Y = v => T + ph * (1 - v);
+  g.font = '11.5px ' + css('--font'); g.lineWidth = 1;
+  g.strokeStyle = css('--grid'); g.fillStyle = css('--muted'); g.textAlign = 'right';
+  for (let v = 0; v <= 1.0001; v += 0.25) { g.beginPath(); g.moveTo(L, Y(v) + .5); g.lineTo(w - R, Y(v) + .5); g.stroke(); g.fillText(Math.round(v * 100) + ' %', L - 6, Y(v) + 4); }
+  g.textAlign = 'center';
+  sw.levels.forEach((lv, i) => {
+    g.beginPath(); g.moveTo(X(i) + .5, T); g.lineTo(X(i) + .5, T + ph); g.stroke();
+    g.fillText(fmt(lv.rho, 2) + ' m', X(i), T + ph + 15); g.fillText(fmt(lv.deg, 1) + '°', X(i), T + ph + 29);
+  });
+  g.fillStyle = css('--muted'); g.textAlign = 'left'; g.fillText('Écart initial (position, angle)', L, h - 3);
+  const DASH = { icp: [], icpl: [10, 3], brute: [7, 4], multires: [2, 3], mc: [9, 3, 2, 3], gd: [4, 2, 1, 2] };   // un motif par méthode : lisible même quand les courbes se superposent
+  ks.forEach((k, idx) => {
+    const jit = (idx - (ks.length - 1) / 2) * 2.5;                                                         // léger décalage horizontal pour séparer les points
+    g.strokeStyle = locColor(k); g.fillStyle = locColor(k); g.lineWidth = 2.2; g.setLineDash(DASH[k.split('/')[1]] || []); g.beginPath();
+    let started = false;
+    sw.rates[k].forEach((v, i) => { if (!isFinite(v)) return; if (!started) { g.moveTo(X(i) + jit, Y(v)); started = true; } else g.lineTo(X(i) + jit, Y(v)); });
+    g.stroke(); g.setLineDash([]);
+    sw.rates[k].forEach((v, i) => { if (isFinite(v)) { g.beginPath(); g.arc(X(i) + jit, Y(v), 3.2, 0, 2 * Math.PI); g.fill(); } });
+  });
+}
+window.addEventListener('resize', () => { if (state.tab === 'loc' && loc.panel === 'sens' && loc.res.sweep) renderLocPanel(); });
+
+/* ---------- onglet : entrée, cadrage, légende, dessin ---------- */
+function locEnter() {
+  locRefreshSelects(); renderLocPanel();
+  resize();                                      // le panneau de résultats vient d'apparaître : on relit la taille de la scène avant de cadrer
+  locFitView();
+}
+function locFitView() {
+  const v = state.view.loc;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  try {
+    const P = locParams(), data = locDataset(P);
+    for (const d of data) {
+      const p = worldPoints(d.scan, d.truth);
+      for (let i = 0; i < p.length; i += 2) { x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); y0 = Math.min(y0, p[i + 1]); y1 = Math.max(y1, p[i + 1]); }
+    }
+  } catch (e) { /* pas encore de données */ }
+  if (!isFinite(x0)) { Object.assign(v, { cx: 3, cy: 2, s: 80 }); draw(); return; }
+  v.cx = (x0 + x1) / 2; v.cy = (y0 + y1) / 2;
+  v.s = Math.min(W / Math.max(1, (x1 - x0) * 1.15), H / Math.max(1, (y1 - y0) * 1.15));
+  draw();
+}
+function locCurrent() {                                     // scan testé, préparation, pose initiale courante
+  const P = locParams(), data = locDataset(P);
+  if (data.length < 2) return null;
+  const test = locPickTest(P, data), L = locL(P, data, test);
+  return { P, data, test, L, init: offsetPose(test.truth, P.dx, P.dy, P.dth) };
+}
+function locLegendHtml() {
+  const cur = state.tab === 'loc' ? locCurrent() : null;
+  if (!cur) return '<span>Il faut au moins 2 scans visibles</span>';
+  const one = loc.res.one && loc.res.one.testName === cur.test.name ? loc.res.one : null;
+  let h = `<span><i class="dot" style="--c:${css('--ok')}"></i>Vérité terrain</span><span><i class="dot" style="--c:${css('--muted')}"></i>Pose initiale</span>`;
+  if (one) for (const k of Object.keys(one.rows)) if (loc.show[k] && !one.rows[k].na && k.startsWith(locType() + '/')) h += `<span><i class="dot" style="--c:${locColor(k)}"></i>${esc(locLabel(k))}</span>`;
+  return h;
+}
+function drawLoc() {
+  drawGridLines();
+  const cur = locCurrent();
+  if (!cur) {
+    ctx.fillStyle = css('--muted'); ctx.font = '600 14px ' + css('--font'); ctx.textAlign = 'center';
+    ctx.fillText('Capturez ou importez au moins 2 scans, ou choisissez le banc d’essai simulé.', W / 2, H / 2); ctx.textAlign = 'left';
+    return;
+  }
+  const { L, test, init } = cur, type = locType(), showPts = $('locShowPts').checked;
+  ctx.font = '600 12px ' + css('--font');
+  if (type === 'grid' && L.grid) {                                       // référence A : la grille construite avec les autres scans
+    let img = loc.imgs.get(L.grid); if (!img) { img = gridImage(L.grid, true); loc.imgs.set(L.grid, img); }
+    const [sx, sy] = w2s(L.grid.xmin, L.grid.ymin + L.grid.ny * L.grid.res);
+    ctx.imageSmoothingEnabled = false; ctx.drawImage(img, sx, sy, L.grid.nx * L.grid.res * V().s, L.grid.ny * L.grid.res * V().s);
+  } else if (type === 'vec' && L.segs) {                                 // référence B : les segments
+    drawSegs(L.segs, css('--ink'), 2.2);
+    ctx.fillStyle = css('--ink');
+    for (const sg of L.segs) for (const [x, y] of [[sg.x1, sg.y1], [sg.x2, sg.y2]]) { const [sx, sy] = w2s(x, y); ctx.fillRect(sx - 2, sy - 2, 4, 4); }
+  } else if (type === 'scan' && L.refScan) {                             // référence C : le scan voisin
+    drawPoints(L.refScan.P, css('--ink'), null, 1.8);
+    drawRobot(L.refScan.pose.x, L.refScan.pose.y, L.refScan.pose.th, css('--ink'), 8);
+    const [sx, sy] = w2s(L.refScan.pose.x, L.refScan.pose.y); ctx.fillStyle = css('--ink'); ctx.fillText('référence : ' + L.refScan.name, sx + 12, sy - 10);
+  }
+  const one = loc.res.one && loc.res.one.testName === test.name ? loc.res.one : null;
+  if (showPts) {
+    drawPoints(worldPoints(test.scan, init), css('--muted'), null, 1.5);          // pose initiale
+    drawPoints(worldPoints(test.scan, test.truth), css('--ok'), null, 2.1);       // vérité terrain
+    if (one) for (const k of Object.keys(one.rows)) {
+      const x = one.rows[k]; if (!loc.show[k] || x.na || !k.startsWith(type + '/')) continue;
+      drawPoints(worldPoints(test.scan, x.pose), locColor(k), null, 1.3);
+    }
+  }
+  const [tx, ty] = w2s(test.truth.x, test.truth.y);
+  if (one) for (const k of Object.keys(one.rows)) {                               // erreurs : un trait de la vérité à l'estimée
+    const x = one.rows[k]; if (!loc.show[k] || x.na || !k.startsWith(type + '/')) continue;
+    const [ex, ey] = w2s(x.pose.x, x.pose.y);
+    ctx.strokeStyle = locColor(k); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(ex, ey); ctx.stroke();
+    drawRobot(x.pose.x, x.pose.y, x.pose.th, locColor(k), 7);
+  }
+  const [ix, iy] = w2s(init.x, init.y);
+  ctx.strokeStyle = css('--muted'); ctx.setLineDash([4, 4]); ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(ix, iy); ctx.stroke(); ctx.setLineDash([]);
+  drawRobot(init.x, init.y, init.th, css('--muted'), 8);
+  drawRobot(test.truth.x, test.truth.y, test.truth.th, css('--ok'), 10);
+  ctx.fillStyle = css('--ok'); ctx.fillText(test.name + ' (vérité)', tx + 14, ty + 18);
+}
+locRefreshSelects();
+renderLocPanel();
+
 
 if (hasSerial()) {
   navigator.serial.addEventListener?.('disconnect', () => {
