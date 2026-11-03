@@ -1,5 +1,3 @@
-__pycache__/
-*.pyc
-.venv/
-.pytest_cache/
-*.npz
+node_modules/
+*.zip
+.DS_Store

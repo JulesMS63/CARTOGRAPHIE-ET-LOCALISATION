@@ -18,9 +18,10 @@ distance/intensité, angles de début et de fin en centièmes de degré, CRC8). 
 (`θ = 360° − θLD06`). Un nouveau scan est détecté quand l'angle repasse de 360° à 0°.
 
 **Ce que j'ai fait.** Sketch `ESP32_LD06_Test.ino` modifié pour appeler `printScanCSV` (au lieu de
-`printScanTeleplot`) ; `capture_serial.py` lit le port série (115200 bauds), découpe les scans
-(ligne vide = fin de scan), ignore les tours incomplets (< 100 points) et enregistre un fichier par scan
-`angle_deg,distance_mm,intensity`. La même acquisition est aussi possible sans Python avec `lidar_web.html` (API Web Serial de Chrome/Edge) : la page décode le même flux, affiche le nuage en direct, enregistre les scans avec leur pose et exporte un .zip lisible par les outils Python. Son noyau de calcul est un portage du code Python ; sur les mêmes scans simulés il donne les mêmes résultats (11 segments, mêmes cellules occupées et libres). Elle n'a été testée qu'avec un port série simulé, pas encore avec le lidar réel.
+`printScanTeleplot`). `lidar_web.html` (API Web Serial de Chrome/Edge) lit le port série (115200 bauds), décode le flux,
+affiche le nuage en direct, enregistre un fichier par scan (`angle_deg,distance_mm,intensity`, avec sa pose) et exporte un .zip.
+Sur les scans simulés de `data_synth/`, son noyau de calcul donne 11 segments, 453 cellules occupées et 8993 libres (test `tests/web_core_test.js`).
+Elle n'a été testée qu'avec un port série simulé, pas encore avec le lidar réel.
 
 On garde les coordonnées **polaires** : elles sont réutilisées pour
 tous les traitements suivants.
@@ -28,7 +29,7 @@ tous les traitements suivants.
 **Point d'attention.** La librairie calcule aussi `x` et `y`, mais avec
 `y = … − distance·sin(angle)` : sur le code fourni, cela donne une image en miroir par rapport à la
 convention du module (angle anti-horaire, Y vers le haut). Je n'utilise donc **jamais** ces colonnes :
-`lidar_io.py` recalcule `x = r·cos θ`, `y = r·sin θ`. À valider sur le robot avec un obstacle de position
+`lidar_web.html` recalcule `x = r·cos θ`, `y = r·sin θ`. À valider sur le robot avec un obstacle de position
 connue (par ex. un carton à gauche du robot doit apparaître avec y > 0).
 
 **[À COMPLÉTER]** nombre de scans par position, positions utilisées, plan sommaire de la salle avec
@@ -36,7 +37,7 @@ les poses mesurées, fréquence de rotation observée, points aberrants rencontr
 
 ## 2. Visualisation des nuages de points
 
-`viewer.py` : chaque scan est converti en cartésien puis placé dans le monde par sa pose
+La page web : chaque scan est converti en cartésien puis placé dans le monde par sa pose
 `(x, y, θ)` : `p_monde = R(θ)·p_lidar + (x, y)`. Une couleur par scan, un disque + un trait pour
 l'origine et l'orientation. Pose modifiable indépendamment par curseurs ou au clavier, sauvegardée en JSON.
 Les points invalides (distance 0 ou > 12 m) sont retirés à la lecture.
@@ -89,7 +90,7 @@ résolution retenue et justification.
 
 ## 4. Segments
 
-Toutes les fonctions sont dans `segments.py`, testées dans `tests/test_segments.py` (33 tests).
+Toutes les fonctions sont dans le noyau de `lidar_web.html`, testées dans `tests/web_unit_test.js` (cas limites de découpe, angle, proximité, fusion).
 
 **Tolérances numériques.** `EPS_LEN = 1e-9 m` (égalité de longueurs, « à l'extrémité ») et
 `EPS_SIN = 1e-9` (parallélisme : |sin de l'angle| ≤ EPS_SIN). Ce sont des valeurs par défaut,
@@ -116,25 +117,25 @@ pas sur le bruit du capteur (qui est géré par les tolérances de `are_close`).
 
 **Règles de `cut_by` (exigées par le sujet) et cas limites testés :**
 
-| Cas | Résultat | Test |
+| Cas | Résultat | Vérifié par |
 | --- | --- | --- |
-| intersection strictement à l'intérieur, côtés inégaux | on garde le plus long côté | `test_cut_keeps_longer_side_first/second` |
-| intersection exactement à une extrémité de `seg` | `seg` inchangé | `test_cut_endpoint_of_seg_unchanged` |
-| intersection à moins de `tol` d'une extrémité / à plus de `tol` | inchangé / découpé | `test_cut_within_tol_of_endpoint_unchanged` |
-| segments colinéaires (recouvrement ou non) | jamais découpés | `test_cut_collinear_not_cut` |
-| segments parallèles | inchangé | `test_cut_parallel_not_cut` |
-| `cutter` ne touche pas `seg` | inchangé | `test_cut_no_intersection_unchanged` |
-| `cutter` qui s'arrête sur `seg` (jonction en T) | découpé (intersection sur les deux segments) | `test_cut_cutter_ends_on_seg_counts` |
-| `cutter` qui s'arrête à moins de `tol` de `seg` / à plus de `tol` | découpé / inchangé | `test_cut_cutter_just_misses_within_tol_still_counts` |
-| deux côtés égaux | on garde le côté de `seg.p1` | `test_cut_equal_halves_*` (y compris segment inversé) |
-| côtés égaux à `tol` près / juste au-delà de `tol` | côté de `p1` / plus long côté | `test_cut_tie_within_tol`, `test_cut_just_above_tie_tolerance_keeps_longer` |
-| segment de longueur nulle | inchangé | `test_cut_degenerate_segment_unchanged` |
+| intersection strictement à l'intérieur, côtés inégaux | on garde le plus long côté | `tests/web_unit_test.js` |
+| intersection exactement à une extrémité de `seg` | `seg` inchangé | `tests/web_unit_test.js` |
+| intersection à moins de `tol` d'une extrémité / à plus de `tol` | inchangé / découpé | `tests/web_unit_test.js` |
+| segments colinéaires (recouvrement ou non) | jamais découpés | `tests/web_unit_test.js` |
+| segments parallèles | inchangé | `tests/web_unit_test.js` |
+| `cutter` ne touche pas `seg` | inchangé | `tests/web_unit_test.js` |
+| `cutter` qui s'arrête sur `seg` (jonction en T) | découpé (intersection sur les deux segments) | `tests/web_unit_test.js` |
+| `cutter` qui s'arrête à moins de `tol` de `seg` / à plus de `tol` | découpé / inchangé | `tests/web_unit_test.js` |
+| deux côtés égaux | on garde le côté de `seg.p1` | `tests/web_unit_test.js` |
+| côtés égaux à `tol` près / juste au-delà de `tol` | côté de `p1` / plus long côté | `tests/web_unit_test.js` |
+| segment de longueur nulle | inchangé | `tests/web_unit_test.js` |
 
 La tolérance sur la position de l'intersection est convertie en paramètre : `tol / longueur`.
 
 ## 5. Carte vectorielle
 
-**Pipeline** (`vectormap.py`, `VectorMap.update`) pour chaque scan et sa pose :
+**Pipeline** (`VectorMap.update` dans `lidar_web.html`) pour chaque scan et sa pose :
 1. extraction des segments dans le repère du lidar ;
 2. passage dans le repère monde (pose appliquée aux deux extrémités) ;
 3. pour chaque nouveau segment : si un segment de la carte lui est « proche » → `merge`, sinon ajout ;
@@ -166,7 +167,7 @@ Les croisements fusionnés à tort avec un objet mobile ne sont pas gérés (pas
 
 Les relevés réels contiennent des points parasites (reflets, poussière, corps du robot, personnes qui passent).
 Sur la carte ils dessinent des « rayons » de points isolés autour des positions du robot. Le filtre
-(`scanfilter.py`, repris à l'identique dans `lidar_web.html`) travaille sur chaque scan avant la grille et les segments :
+(fonction `filterScan` de `lidar_web.html`) travaille sur chaque scan avant la grille et les segments :
 
 1. les points plus proches que 0,20 m du capteur sont retirés ;
 2. chaque point (balayage trié par angle, circulaire) est relié à ses 2 voisins suivants si l'écart ne dépasse pas
@@ -188,8 +189,7 @@ Limite : une personne qui bouge près du robot forme un vrai groupe de points et
 
 ### Grille d'occupation 2D sans / avec filtre
 
-Pour juger le filtre, deux grilles sont construites sur la même étendue (`grid2d.py`, `grid2d_tool.py`, onglet « Grille 2D »
-de l'application et de la page web) : l'une avec tous les points mesurés, l'autre avec les points gardés. Une cellule est
+Pour juger le filtre, deux grilles sont construites sur la même étendue (onglet « Grille 2D » de la page web) : l'une avec tous les points mesurés, l'autre avec les points gardés. Une cellule est
 *isolée* si aucune de ses 8 voisines n'est occupée. Un bon filtre fait tomber les cellules isolées sans réduire beaucoup les
 cellules occupées (les murs). Les carreaux se règlent en millimètres (entier, 10 à 500).
 
@@ -212,25 +212,23 @@ Effet de « points min. » sur le même relevé :
 | (sans filtre) | 742 | 155 | 0 |
 
 Au-delà de 8, on perd des cellules de murs sans retirer plus de cellules isolées : 8 est un bon compromis ici.
-Image : `exemples_synthetiques/grille2d_comparaison.png`. Limite : si les carreaux sont plus petits que l'espacement des
+Image : `exemples_synthetiques/grille2d_comparaison.png` (image et tableau issus de la version Python initiale du TP, conservée dans l'historique Git : commit `64a5633`). Limite : si les carreaux sont plus petits que l'espacement des
 points (2 à 4 cm à 3 m), les murs deviennent pointillés et les cellules « isolées » augmentent (sur le relevé simulé : 68 à 20 mm,
 502 à 10 mm), ce qui n'est plus un défaut du filtre. **[À COMPLÉTER]** mêmes tableaux sur tes scans réels
-(`python grid2d_tool.py scans --poses poses.json --sweep-points 1,4,8,12`) et ta conclusion.
+(onglet Grille 2D, curseur « Force du filtre » à 1, 4, 8 puis 12) et ta conclusion.
 
 ## Paramètres à régler sur ta salle
 
-| Paramètre | Où | Défaut | Si ça ne marche pas |
+| Paramètre | Où (page web) | Défaut | Si ça ne marche pas |
 | --- | --- | --- | --- |
-| `--res` | `gridmap_tool` | 0,05 m | murs troués → 0,10 m ; trop grossier → 0,03 m |
-| `l_free`, `l_occ` | `OccupancyGrid` | −0,4 / +0,85 | murs qui disparaissent → |l_free| plus petit |
-| `--forget` | `gridmap_tool` | 1,0 (désactivé) | objets mobiles → 0,95 à 0,99 |
-| `split_dist` | `extract_segments` | 0,03 m | trop de petits segments → 0,05 m |
-| `ang_tol`, `dist_tol`, `gap_tol` | `VectorMap` | 10° / 6 cm / 15 cm | murs dédoublés → augmenter `dist_tol` |
-| `--min-weight` | `vectormap_tool` | 1 | segments parasites → 2 |
-| `min_points` | filtre des points isolés | 8 | parasites restants → 10 à 12 ; petits objets effacés → 4 à 5 |
-| `min_range` | filtre des points isolés | 0,20 m | points collés au robot → 0,30 m ; obstacle proche effacé → 0,10 m |
-| `break_min` | filtre des points isolés | 0,10 m | murs coupés en morceaux → 0,15 m |
-| `--cell-mm` | `grid2d_tool`, onglet Grille 2D | 50 mm | murs pointillés → 80 à 100 mm ; trop grossier → 25 à 30 mm |
+| Carreaux de la grille | étape 4 | 50 mm | murs troués → 100 mm ; trop grossier → 30 mm |
+| Oubli par scan | étape 4 | 1,0 (désactivé) | objets mobiles → 0,95 à 0,99 |
+| Écart d'angle, écart latéral, trou admis | étape 4 | 10° / 6 cm / 15 cm | murs dédoublés → augmenter l'écart latéral |
+| Observations min. | étape 4 | 1 | segments parasites → 2 |
+| Points min. par groupe | étape 4, filtre | 8 | parasites restants → 10 à 12 ; petits objets effacés → 4 à 5 |
+| Distance min. au capteur | étape 4, filtre | 0,20 m | points collés au robot → 0,30 m ; obstacle proche effacé → 0,10 m |
+| Écart toléré dans un groupe | étape 4, filtre | 0,10 m | murs coupés en morceaux → 0,15 m |
+| Carreaux (mm) | onglet Grille 2D | 50 mm | murs pointillés → 80 à 100 mm ; trop grossier → 25 à 30 mm |
 
 
 # Jour 2 – Localisation (page `lidar_web.html`, onglet Localisation)

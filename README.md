@@ -1,31 +1,20 @@
-# TP SLAM – Jour 1 : extraction, visualisation, cartographie
+# TP SLAM – cartographie et localisation avec le lidar LD06
 
-Outils Python (numpy + matplotlib) pour exploiter le lidar LD06 : acquisition, nuages de points,
-grille d'occupation, segments et carte vectorielle.
-
-## Installation (Windows)
-
-```powershell
-cd TP_SLAM_Jour1
-python -m venv .venv
-.venv\Scripts\activate
-python -m pip install -r requirements.txt
-python -m pytest -q            # tous les tests doivent passer
-```
+Tout le TP tient dans **une seule page web autonome** : `lidar_web.html`. Elle lit le lidar LD06 branché à l'ESP32
+(ou une simulation), capture des scans, les place, construit la grille d'occupation et la carte vectorielle,
+compare des méthodes de localisation et retrouve la position d'un scan à partir d'un autre. Rien à installer :
+**double-clic**, dans Chrome ou Edge.
 
 ## Essayer tout de suite, sans robot
 
-```powershell
-python make_synthetic.py                         # crée data_synth/ (4 scans simulés d'une salle)
-python viewer.py data_synth --poses poses.json   # visualiseur : bouger les scans à la main
-python gridmap_tool.py build data_synth --poses data_synth\poses_true.json --out carte_grille --steps
-python vectormap_tool.py data_synth --poses data_synth\poses_true.json --out carte_vect
-```
+1. Ouvrir `lidar_web.html`, étape 1, bouton **Simulation** (salle simulée de 6 × 4 m).
+2. Ou **importer** les scans d'exemple du dossier `data_synth/` (4 scans simulés d'une salle ; `poses_true.json` contient leurs vraies poses) :
+   étape 3, « Importer des fichiers », puis onglets Carte et Grille 2D. Pour la localisation : onglet Localisation,
+   « Mes scans », « Importer poses.json ».
+3. Tu peux aussi dessiner une salle dans `Tools/MapTool/MapTool.html`, exporter le scan (`scan_lidar.csv`) et le charger :
+   les formats MapTool et RobotControl sont reconnus.
 
-Tu peux aussi dessiner une salle dans `Tools/MapTool/MapTool.html`, exporter le scan
-(`scan_lidar.csv`) et le charger directement : les formats MapTool et RobotControl sont reconnus.
-
-## Page web : `lidar_web.html` (le plus simple pour acquérir et visualiser)
+## La page `lidar_web.html`
 
 Un seul fichier, sans installation : **double-clic**, à ouvrir avec **Chrome ou Edge** (pas dans une fenêtre
 intégrée à une application, pas Firefox ni Safari : ils n'ont pas l'accès série).
@@ -66,8 +55,7 @@ terminées passent en bleu avec une coche, les suivantes restent grisées. Chaqu
 5. **Grille d'occupation 2D** : onglet **Grille 2D**. La grille sans filtre (à gauche) et avec filtre (à droite) se comparent avec un curseur de séparation ; un second curseur règle la force du filtre ; la taille des carreaux se saisit en millimètres (entier, 10 à 500). Un tableau compte les cellules occupées et celles qui sont isolées.
 6. **Localisation (Jour 2)** : onglet **Localisation**, voir la section ci-dessous.
 7. **Exporter** : `.zip` avec `scans/*.csv`, `poses.json`, `carte_vectorielle.txt`, `grille.csv`, `carte.png`,
-   `projet.json` (ré-importable). Les outils Python lisent directement ce dossier :
-   `python gridmap_tool.py build scans --poses poses.json --out carte`.
+   `projet.json` (ré-importable dans la page).
 
 Le bouton **Simulation** permet d'essayer la page sans robot.
 
@@ -75,7 +63,7 @@ Le bouton **Simulation** permet d'essayer la page sans robot.
 le navigateur et explique l'erreur exacte. Pistes, de la plus fréquente à la plus rare : câble USB « charge seulement » ;
 pilote CP210x ou CH340 absent (Gestionnaire de périphériques → Ports COM) ; port tenu par le moniteur série d'Arduino ;
 page ouverte dans une fenêtre intégrée au lieu de Chrome/Edge. Si la page est ouverte depuis un fichier et que rien
-ne réagit, lancer `python -m http.server` dans ce dossier et ouvrir `http://localhost:8000/lidar_web.html`.
+ne réagit, ouvrir la page par un petit serveur local (par exemple `python -m http.server` ou `npx serve` dans ce dossier, puis `http://localhost:8000/lidar_web.html`).
 Une fois connecté, « Données reçues » (étape 1) montre les derniers octets reçus : du texte lisible = bon câble et
 bonne vitesse ; des caractères étranges = mauvaise vitesse ; rien = le sketch n'envoie pas (bouton EN de la carte).
 Les réglages « Décalage » et « Miroir » corrigent le montage du capteur.
@@ -116,117 +104,44 @@ refaire les mesures sur tes scans.
 
 Tests du noyau (Node) : `node tests/web_loc_test.js lidar_web.html` (150 vérifications) et `node tests/web_reg_test.js lidar_web.html` (32 vérifications, recalage automatique).
 
-## Application de bureau : `lidar_app.py` (à ouvrir dans VS Code)
+## Ordre de travail conseillé
 
-La même démarche que la page web, dans une vraie fenêtre Python (Tkinter + matplotlib, rien d'autre à installer
-que `requirements.txt`). Elle réutilise directement `gridmap.py`, `segments.py` et `vectormap.py` : la carte que
-tu vois est calculée par le code du TP.
-
-**Dans VS Code**
-1. `Fichier > Ouvrir le dossier…` : choisir `TP_SLAM_Jour1`. VS Code propose d'installer l'extension Python : accepter.
-2. Terminal VS Code : `python -m venv .venv`, puis `.venv\Scripts\activate`, puis `python -m pip install -r requirements.txt`
-   (ou `Ctrl+Maj+P > Tasks: Run Task > Installer les dépendances`). Choisir l'interpréteur `.venv` en bas à droite.
-3. **F5** (ou l'onglet « Exécuter et déboguer » > « Lidar : lancer l'application ») ouvre la fenêtre.
-   `Ctrl+Maj+P > Tasks: Run Task > Lancer les tests` lance les tests.
-
-**Dans la fenêtre** : mêmes 6 étapes que la page web (chronologie à gauche, vue Direct / Carte / Grille 2D à droite).
-- Étape 1 : la liste des ports série se remplit toute seule (CP210x, CH340…). Pas de robot : « Simulation sans robot ».
-  Si rien n'est détecté, le bouton **Diagnostic** liste les pistes (câble « charge seulement », pilote, port occupé).
-- Étape 2 : position du robot *depuis l'origine* (x, y, θ) ou *depuis le précédent* (avant, gauche, rotation).
-  Espace = capturer. Chaque scan a sa couleur.
-- Étape 3 : onglet Carte, « Glisser : le scan choisi », glisser (Maj : tourner). Molette : zoom. Flèches, `,` `.` : réglage fin.
-- Étape 4 : taille des carreaux en **millimètres** (entier de 10 à 500, par défaut 50), filtre des points isolés
-  (points min. 8, distance min. 0,20 m, écart de groupe 0,10 m, confirmation par un 2e scan en option).
-- Étape 5 : onglet **Grille 2D**. Deux grilles sur la même étendue : *sans filtre* à gauche, *avec filtre* à droite, séparées
-  par un curseur (boutons « Comparer / Sans filtre / Avec filtre »). Le curseur **Force du filtre** règle le nombre de points
-  minimum d'un groupe (0 = filtre désactivé). Le champ **Carreaux (mm)** affine ou grossit le maillage. Le HUD et l'étape
-  comptent les cellules occupées et les cellules *isolées* (sans voisine occupée) : un bon filtre fait tomber les isolées
-  sans réduire beaucoup les cellules des murs. « Enregistrer la comparaison (PNG) » sauve l'image pour le rapport.
-- Étape 6 : `.zip` (ou dossier) avec `scans/*.csv` (filtrés, chacun commence par la ligne `# pose: x=… y=… theta=…`),
-  `poses.json`, `projet.json` (brut), `carte_vectorielle.txt`, `grille.csv`, `carte.png`, et, si la grille 2D a été ouverte,
-  `grille2d_comparaison.png` et `grille2d_stats.txt`.
-  Les fichiers sont lisibles par `gridmap_tool.py`, `vectormap_tool.py` et par la page web (import de `projet.json`).
-- La position d'un scan **suit le fichier** : la ligne `# pose:` est relue à l'import (application, page web et outils
-  Python). Un `poses.json` à côté des scans reste prioritaire s'il est fourni.
-
-**En ligne de commande : la grille 2D sans / avec filtre** (`grid2d_tool.py`)
-```powershell
-python grid2d_tool.py scans_salle --poses poses.json --cell-mm 50 --min-points 8 --sweep-points 1,4,8,12 --out resultats/grille2d
-```
-Écrit `grille2d_sans_filtre.png`, `grille2d_avec_filtre.png`, `grille2d_comparaison.png`, `grille2d_stats.txt` (tableau
-des cellules occupées / isolées / points ignorés) et `grille2d_avec_filtre.csv`. `--sweep-points` teste plusieurs valeurs
-de « points min. » et affiche un tableau (à recopier dans le rapport). Autres options : `--min-range`, `--break-min`,
-`--confirm --confirm-tol 0.10`, `--no-filter`. Sans `--poses`, la ligne `# pose:` des `.csv` est utilisée.
-Exemple sur données simulées : `exemples_synthetiques/grille2d_comparaison.png`.
-
-Pour intégrer l'application à un autre projet, copier `lidar_app.py`, `lidar_widgets.py`, `lidar_plot.py`,
-`lidar_session.py`, `lidar_stream.py` et les modules du TP qu'ils importent (`geometry.py`, `lidar_io.py`,
-`gridmap.py`, `segments.py`, `vectormap.py`, `make_synthetic.py` pour la simulation).
-
-## Ordre de travail conseillé aujourd'hui
-
-1. **Acquisition (point 1)** – `capture_serial.py`
-   - Dans `ESP32_LD06_Test.ino`, remplacer `ld06.printScanTeleplot(Serial);` par
-     `ld06.printScanCSV(Serial);` et téléverser. Fermer le moniteur série de l'IDE Arduino.
-   - `python capture_serial.py --port COM5 --n 5 --out scans_salle --prefix pos1`
-   - Robot **immobile** pendant la capture. Refaire pour plusieurs positions (`pos2`, `pos3`…).
-   - **Noter pour chaque position** la pose réelle approximative (x, y en m, orientation en °)
-     avec un mètre ruban : elle sert de pose de départ pour la suite.
-2. **Visualisation (point 2)** – `viewer.py scans_salle` puis ajuster les poses, touche `s` pour sauver.
-3. **Grille (point 3)** – `gridmap_tool.py` (`scan2grid`, `update`, `build`).
-4. **Segments (point 4)** – `segments.py` + `tests/test_segments.py`.
-5. **Carte vectorielle (point 5)** – `vectormap_tool.py`.
-6. **Compte rendu** – compléter `RAPPORT_Jour1.md` avec TES résultats réels.
+1. **Acquisition** : dans `ESP32_LD06_Test.ino`, remplacer `ld06.printScanTeleplot(Serial);` par `ld06.printScanCSV(Serial);`
+   et téléverser. Fermer le moniteur série d'Arduino. Étape 1 de la page. Robot **immobile** pendant la capture ; refaire pour plusieurs positions.
+2. **Visualisation et placement** : étapes 2 et 3 (onglet Carte). Noter la pose approximative de chaque position (mètre ruban), ou utiliser le recalage automatique.
+3. **Grille d'occupation, segments, carte vectorielle** : étapes 4 et 5 (onglets Carte et Grille 2D).
+4. **Localisation (Jour 2)** : étape 6.
+5. **Compte rendu** : compléter `RAPPORT_Jour1.md` avec TES résultats réels.
 
 ## Contenu
 
 | Fichier | Rôle |
 | --- | --- |
-| `geometry.py` | rotations, passage repère lidar → monde (pose = x, y en m, theta en °) |
-| `lidar_io.py` | lecture des scans (ESP32 `printScanCSV`, MapTool, RobotControl), poses JSON, ligne `# pose:` des .csv |
-| `lidar_app.py` | application de bureau (fenêtre) : lidar en direct, capture, poses, cartes, export |
-| `lidar_widgets.py`, `lidar_plot.py` | éléments d'interface et dessins de l'application |
-| `lidar_session.py`, `lidar_stream.py` | données d'un relevé, poses relatives, export ; lecture du port série (sans interface) |
-| `.vscode/` | lancement par F5, tâches, tests, extensions conseillées |
-| `lidar_web.html` | page web autonome : lidar en direct, capture, poses, grille, segments, export .zip |
-| `capture_serial.py` | enregistre les scans reçus sur le port série de l'ESP32 (alternative en ligne de commande) |
-| `viewer.py` | affiche plusieurs scans (couleurs distinctes), pose réglable par scan |
-| `gridmap.py`, `gridmap_tool.py` | carte d'occupation : création depuis un scan, mise à jour |
-| `scanfilter.py` | filtre des points isolés + confirmation par un 2e scan (même algorithme dans `lidar_web.html`, comparé par les tests) |
-| `grid2d.py`, `grid2d_tool.py` | grille d'occupation 2D sans / avec filtre (carreaux en mm, statistiques) et son outil en ligne de commande |
-| `segments.py` | extraction de segments, angle, proximité, fusion, intersection, découpe |
-| `vectormap.py`, `vectormap_tool.py` | carte vectorielle |
-| `make_synthetic.py` | simule un lidar dans une salle pour tester sans robot |
-| `tests/` | tests unitaires et de bout en bout |
+| `lidar_web.html` | la page : lidar en direct, capture, poses, grille, segments, filtre, localisation, recalage, export .zip |
+| `data_synth/` | 4 scans simulés et leurs vraies poses, pour essayer sans robot |
 | `exemples_synthetiques/` | images obtenues sur les données simulées (pas des données réelles) |
+| `tests/` | tests du noyau de calcul de la page (Node) |
+| `RAPPORT_Jour1.md` | compte rendu (parties à compléter avec les résultats réels) |
 
-## Raccourcis du visualiseur
+## Tests
 
-Boutons radio : scan actif · flèches : déplace de 5 cm (Maj : 1 cm) · `,` et `.` : tourne de 1° (Maj : 0,2°) ·
-`Tab` : scan suivant · `s` : sauver les poses · `r` : remettre la pose du scan à zéro.
+Les tests chargent le noyau de calcul directement depuis `lidar_web.html`. Il faut [Node.js](https://nodejs.org) (aucune autre installation) :
+
+```powershell
+node tests/run_all.js
+```
+
+Ils vérifient la géométrie des segments, la chaîne scans → grille et carte vectorielle, les 14 méthodes de localisation et le recalage automatique.
 
 ## Git
 
 ```powershell
-git init                       # seulement si le dossier n'est pas déjà un dépôt
-git status                     # vérifier ce qui sera ajouté (pas de .venv, pas de __pycache__ : voir .gitignore)
-git add .
-git commit -m "Jour 1 : acquisition lidar, filtre des points isolés, grille 2D sans/avec filtre, segments, carte vectorielle"
-git remote add origin https://github.com/<ton-compte>/<ton-depot>.git    # une seule fois
-git push -u origin main
-```
-Fais plusieurs commits (un par étape) : c'est ce qui montre la progression. Exemple :
-```powershell
-git add capture_serial.py lidar_io.py viewer.py
-git commit -m "Acquisition : lecture et affichage des scans, pose enregistrée avec le scan"
-git add scanfilter.py gridmap.py gridmap_tool.py grid2d.py grid2d_tool.py
-git commit -m "Grille d'occupation 2D, filtre des points isolés et comparaison sans/avec filtre"
-git add segments.py vectormap.py vectormap_tool.py tests
-git commit -m "Segments, carte vectorielle et tests"
-git add lidar_app.py lidar_widgets.py lidar_plot.py lidar_session.py lidar_stream.py lidar_web.html README.md RAPPORT_Jour1.md
-git commit -m "Application de bureau, page web et compte rendu"
+git status                     # vérifier ce qui sera ajouté
+git add lidar_web.html README.md RAPPORT_Jour1.md tests
+git commit -m "Description courte de la version"
 git push
 ```
+Un commit par version de la page (v1, v2, …) montre la progression : voir `git log --oneline`.
 
 ## Conventions
 

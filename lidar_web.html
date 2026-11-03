@@ -734,7 +734,7 @@ function worldPoints(scan, pose) {
   return out;
 }
 
-/* ---------- filtre des points isolés (même algorithme que scanfilter.py) ----------
+/* ---------- filtre des points isolés (algorithme du TP) ----------
    1. distance minimale : on retire les points plus proches que minRange du capteur ;
    2. groupes : chaque point est relié à ses `reach` voisins suivants (balayage circulaire) quand l'écart
       ne dépasse pas max(breakMin, breakK * rMin * pas * dTheta) ; les points reliés forment un groupe, et
