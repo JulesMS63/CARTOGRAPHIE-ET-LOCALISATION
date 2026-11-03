@@ -99,6 +99,17 @@ Un message WebSocket = un tour complet. Formats lus : JSON `[{"a":angle°,"d":di
 Au moins 50 points par tour. Si la liaison tombe, la page retente 10 fois toutes les 2 s. Sans `i`, tous les points ont
 l'intensité 255 : le filtre d'intensité n'a alors rien à filtrer. Le mot de passe du réseau n'est jamais demandé ni stocké.
 
+### Piloter le robot (v16)
+
+Connecté en Wi-Fi, un **pavé de pilotage** apparaît en bas à droite de la vue Direct : on voit le lidar en direct pendant qu'on conduit.
+Boutons (à tenir appuyés) ou clavier après avoir coché **Clavier** : ↑ ↓ avancer / reculer, ← → tourner, Maj + ← → (ou Q / D) décaler sur le côté,
+**Espace** arrêt. Les flèches combinées donnent les diagonales (↑ + Maj + ←, etc.).
+
+Commandes envoyées par le même WebSocket que le lidar : `D,vx,vy,w` (vx > 0 avance, vy > 0 décale à gauche, w > 0 tourne à gauche ; −1, 0 ou 1),
+répétée toutes les 100 ms tant qu'une touche est tenue, et `S` pour arrêter. Un arrêt est aussi envoyé au relâchement, à la perte de focus de la fenêtre,
+au changement d'onglet et à la déconnexion. Le sketch doit en plus s'arrêter seul si les ordres cessent (300 ms dans le sketch fourni).
+La bibliothèque du Mecanum Car ne propose que des mouvements à vitesse fixe : il n'y a donc pas de curseur de vitesse.
+
 ### Jour 2 : localisation (onglet Localisation de `lidar_web.html`)
 
 Le but : retrouver la pose (x, y, θ) d'un scan, de trois façons, et **comparer les méthodes avec les mêmes conditions initiales**.

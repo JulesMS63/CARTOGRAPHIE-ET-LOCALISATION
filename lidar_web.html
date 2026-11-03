@@ -187,6 +187,20 @@
          background: var(--chalk); border: 1px solid var(--hair); font-size: 12.5px; color: var(--muted); pointer-events: none; }
   .hud[hidden] { display: none; }
   .hud b { font: 600 15px/1 var(--font-display); color: var(--ink); margin-right: 3px; }
+  .drive { position: absolute; right: 14px; bottom: 34px; display: grid; gap: 8px; padding: 10px 12px 12px; border-radius: 12px;
+           background: var(--chalk); border: 1px solid var(--hair-strong); font-size: 12.5px; color: var(--muted); user-select: none; }
+  .drive[hidden] { display: none; }
+  .drive .dh { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+  .drive .dh b { font: 600 14px/1 var(--font-display); color: var(--ink); }
+  .drive .pad { display: grid; grid-template-columns: repeat(3, 46px); grid-auto-rows: 46px; gap: 5px; justify-content: center; }
+  .drive .pad button { all: unset; box-sizing: border-box; display: grid; place-content: center; cursor: pointer; border-radius: 9px; border: 1px solid var(--hair-strong);
+                       background: var(--canvas); color: var(--ink); font: 600 18px/1 var(--font); touch-action: none; }
+  .drive .pad button:hover { background: var(--paper, var(--canvas)); border-color: var(--blue); }
+  .drive .pad button[data-on=true] { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .drive .pad button.stop { color: #b42318; }
+  .drive .pad button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .drive .dstate { text-align: center; min-height: 16px; color: var(--ink); font-weight: 600; }
+  .drive .dhint { max-width: 176px; line-height: 1.35; }
   .coords { position: absolute; right: 14px; bottom: 12px; font-size: 12px; color: var(--muted); pointer-events: none; }
   .empty { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px; text-align: center; padding: 24px; }
   .empty[hidden] { display: none; }
@@ -696,6 +710,22 @@
   <div class="stage">
     <canvas id="cv" tabindex="0" aria-label="Vue du lidar"></canvas>
     <div class="hud" id="hud" hidden></div>
+    <div class="drive" id="drive" hidden role="group" aria-label="Pilotage du robot">
+      <div class="dh"><b>Pilotage</b><label class="check" title="Active les flèches du clavier, Maj, Q, D et Espace"><input type="checkbox" id="drvKeys"> Clavier</label></div>
+      <div class="pad">
+        <button type="button" data-v="0,1,0" aria-label="Décaler à gauche" title="Décaler à gauche (Maj + ←  ou  Q)">⇦</button>
+        <button type="button" data-v="1,0,0" aria-label="Avancer" title="Avancer (↑)">▲</button>
+        <button type="button" data-v="0,-1,0" aria-label="Décaler à droite" title="Décaler à droite (Maj + →  ou  D)">⇨</button>
+        <button type="button" data-v="0,0,1" aria-label="Tourner à gauche" title="Tourner à gauche (←)">↺</button>
+        <button type="button" class="stop" data-stop="1" aria-label="Arrêt" title="Arrêt (Espace)">■</button>
+        <button type="button" data-v="0,0,-1" aria-label="Tourner à droite" title="Tourner à droite (→)">↻</button>
+        <span></span>
+        <button type="button" data-v="-1,0,0" aria-label="Reculer" title="Reculer (↓)">▼</button>
+        <span></span>
+      </div>
+      <div class="dstate" id="drvState" aria-live="polite">Arrêt</div>
+      <div class="dhint">← → tourner · Maj + ← → décaler · Espace arrêt. Le robot s'arrête seul dès que la commande cesse.</div>
+    </div>
     <div class="coords" id="footRight"></div>
     <div class="empty" id="empty" hidden></div>
     <div class="cmp" id="cmpBar" hidden>
@@ -2493,6 +2523,81 @@ function wsMessage(data) {
   }
 }
 
+/* ---------- pilotage du robot par Wi-Fi ----------
+   Commandes texte envoyées à l'ESP32 par le même WebSocket que le lidar :
+     D,vx,vy,w   avancer (vx > 0), décaler à gauche (vy > 0), tourner à gauche (w > 0) ; valeurs entre -1 et 1
+     S           arrêt
+   Répétées toutes les 100 ms tant qu'une touche est tenue ; le sketch s'arrête seul si elles cessent. */
+const drive = { keys: new Set(), ignore: new Set(), shift: false, pad: [0, 0, 0], last: 'S' };   // ignore : touches tenues pendant un arrêt, sans effet jusqu'au relâchement
+const driveReady = () => !!(state.ws && state.ws.readyState === 1);
+function driveVec() {
+  const k = drive.keys; let vx = 0, vy = 0, w = 0;
+  if ($('drvKeys').checked) {
+    vx = (k.has('ArrowUp') ? 1 : 0) - (k.has('ArrowDown') ? 1 : 0);
+    const side = (k.has('ArrowLeft') ? 1 : 0) - (k.has('ArrowRight') ? 1 : 0);   // + = gauche
+    if (drive.shift) vy = side; else w = side;
+    vy += (k.has('q') ? 1 : 0) - (k.has('d') ? 1 : 0);
+  }
+  vx += drive.pad[0]; vy += drive.pad[1]; w += drive.pad[2];
+  const c = v => Math.max(-1, Math.min(1, v));
+  return [c(vx), c(vy), c(w)];
+}
+function driveLabel(v) {
+  const parts = [];
+  if (v[0]) parts.push(v[0] > 0 ? 'Avance' : 'Recule');
+  if (v[2]) parts.push(v[2] > 0 ? 'Tourne à gauche' : 'Tourne à droite');
+  if (v[1]) parts.push(v[1] > 0 ? 'Décale à gauche' : 'Décale à droite');
+  return parts.length ? parts.join(' + ') : 'Arrêt';
+}
+function driveTick() {
+  const show = driveReady() && state.tab === 'live';
+  $('drive').hidden = !show;
+  const v = show ? driveVec() : [0, 0, 0], moving = v.some(x => x !== 0);
+  const cmd = moving ? `D,${v[0]},${v[1]},${v[2]}` : 'S';
+  if (moving || drive.last !== 'S') { if (driveReady()) { try { state.ws.send(cmd); } catch (_) { /* liaison coupée : le robot s'arrête seul */ } } }
+  drive.last = cmd;
+  $('drvState').textContent = driveLabel(v);
+  document.querySelectorAll('#drive .pad button[data-v]').forEach(b => {
+    const bv = b.dataset.v.split(',').map(Number);
+    b.dataset.on = String(moving && bv.some((x, i) => x !== 0 && x === v[i]));
+  });
+}
+function updateDrive() { driveTick(); }
+function driveStopAll() { drive.keys.clear(); drive.ignore.clear(); drive.pad = [0, 0, 0]; drive.shift = false; driveTick(); }
+setInterval(driveTick, 100);
+addEventListener('keydown', e => {
+  if (!$('drvKeys').checked || $('drive').hidden) return;
+  const t = e.target;
+  if (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName) && t.id !== 'drvKeys') return;
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'q', 'd', 'Shift', ' '].includes(k)) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (k !== 'Shift') e.preventDefault();
+  drive.shift = e.shiftKey;
+  if (k === ' ') { drive.keys.forEach(x => drive.ignore.add(x)); drive.keys.clear(); drive.pad = [0, 0, 0]; }
+  else if (k !== 'Shift' && !drive.ignore.has(k)) drive.keys.add(k);
+  driveTick();
+});
+addEventListener('keyup', e => {
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  drive.shift = e.shiftKey; drive.keys.delete(k); drive.ignore.delete(k);
+  driveTick();
+});
+addEventListener('blur', driveStopAll);
+addEventListener('pagehide', driveStopAll);
+document.addEventListener('visibilitychange', () => { if (document.hidden) driveStopAll(); });
+$('drvKeys').addEventListener('change', () => { $('drvKeys').blur(); driveStopAll(); });
+document.querySelectorAll('#drive .pad button').forEach(b => {
+  b.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    if (b.dataset.stop) { driveStopAll(); return; }
+    try { b.setPointerCapture(e.pointerId); } catch (_) { /* ignoré */ }
+    drive.pad = b.dataset.v.split(',').map(Number); driveTick();
+  });
+  const release = () => { if (b.dataset.v) { drive.pad = [0, 0, 0]; driveTick(); } };
+  b.addEventListener('pointerup', release); b.addEventListener('pointercancel', release); b.addEventListener('lostpointercapture', release);
+});
+
 $('connPill').addEventListener('click', () => { setOpen('connect', true); stepEl('connect').scrollIntoView({ block: 'nearest' }); });
 
 /* moniteur : dernières lignes reçues, rafraîchi 3 fois par seconde */
@@ -3074,6 +3179,7 @@ $('empty').addEventListener('click', e => {
 });
 
 function updateChrome() {
+  try { updateDrive(); } catch (_) { /* pilotage pas encore initialisé au démarrage */ }
   const t = state.scanTimes;
   const hz = t.length > 1 ? (t.length - 1) / ((t[t.length - 1] - t[0]) / 1000) : 0;
   // pastille
@@ -3192,6 +3298,7 @@ window.addEventListener('keydown', e => {
 /* ---------- onglets ---------- */
 function setTab(t) {
   state.tab = t;
+  try { updateDrive(); } catch (_) { /* idem */ }
   $('tabLive').setAttribute('aria-selected', t === 'live');
   $('tabMap').setAttribute('aria-selected', t === 'map');
   $('tabGrid').setAttribute('aria-selected', t === 'grid');
