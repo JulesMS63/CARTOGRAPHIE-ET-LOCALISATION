@@ -77,8 +77,8 @@ ok(a.pose.x === b.pose.x && a.pose.th === b.pose.th, 'résultat identique à ent
 }
 
 // --- suivi par carte locale (N derniers scans) : obstacle qui bouge, pas de 0,8 m, plusieurs graines
-function trajectory(seed, steps, step) {
-  const rg = A.makeRng(seed); let p = { x: 1, y: 1, th: 0 }; const T = [];
+function trajectory(seed, steps, step, start = { x: 1, y: 1, th: 0 }) {
+  const rg = A.makeRng(seed); let p = { ...start }; const T = [];
   for (let i = 0; i < steps; i++) {
     T.push({ ...p });
     let nx = p.x + step * Math.cos(p.th * Math.PI / 180), ny = p.y + step * Math.sin(p.th * Math.PI / 180), th = p.th;
@@ -112,8 +112,17 @@ function track(T, scans, N) {
   ok(mean('n5') <= mean('n1') * 1.05, 'la carte locale (N=5) est au moins aussi précise que le scan précédent seul');
   // pas de 0,8 m, bruit 2 cm, 6 % de parasites : le scan précédent seul décroche, la carte locale tient
   const T = trajectory(12, 40, 0.8), sc = dynScans(T, 12, 0.02, 0.06), a = track(T, sc, 1), b = track(T, sc, 5);
-  ok(b.rms < 0.05 && b.max < 0.10, 'pas de 0,8 m + obstacle mobile : carte locale ' + (100 * b.rms).toFixed(1) + ' cm, scan précédent seul ' + (100 * a.rms).toFixed(0) + ' cm');
-  ok(b.rms <= a.rms, 'la carte locale ne fait jamais pire que le scan précédent seul');
+  ok(b.rms < 0.05 && b.max < 0.10, 'pas de 0,8 m + obstacle mobile : carte locale ' + (100 * b.rms).toFixed(1) + ' cm, scan précédent seul ' + (100 * a.rms).toFixed(1) + ' cm');
+  ok(a.rms < 0.05 && a.max < 0.10, 'pas de 0,8 m + obstacle mobile : même le scan précédent seul tient grâce à la recherche globale (' + (100 * a.rms).toFixed(1) + ' cm)');
+}
+// --- lien perdu : le robot a été déplacé de plusieurs mètres entre deux scans (scans manquants) ; la recherche globale sur les scans fiables le retrouve
+{
+  const TT = trajectory(13, 12, 0.5).concat(trajectory(21, 12, 0.5, { x: 4.8, y: 3.0, th: 200 })), all = dynScans(TT, 13, 0.01, 0.03);   // 2e partie : le robot a été posé ailleurs
+  const tr = A.trackerNew({ N: 1 }), passes = [];
+  all.forEach((s, i) => { const r = A.trackerStep(tr, s, i === 0 ? TT[0] : null); passes.push(r.pass); });
+  console.log('  passes :', passes.join(''), '| erreurs cm :', tr.items.map((it, i) => (100 * A.poseError(it.pose, TT[i]).pos).toFixed(0)).join(' '), '| pas :', TT.slice(1).map((p, i) => Math.hypot(p.x - TT[i].x, p.y - TT[i].y).toFixed(1)).join(' '));
+  const e = tr.items.map((it, i) => A.poseError(it.pose, TT[i]).pos);
+  ok(passes[12] === 3 && Math.max(...e) < 0.06, 'saut de ' + Math.hypot(TT[12].x - TT[11].x, TT[12].y - TT[11].y).toFixed(1) + ' m entre deux scans : retrouvé par la recherche globale, erreur max ' + (100 * Math.max(...e)).toFixed(1) + ' cm');
 }
 // --- départage de deux positions aussi bonnes par le mouvement prévu
 {

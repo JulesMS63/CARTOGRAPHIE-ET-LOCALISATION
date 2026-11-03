@@ -1973,7 +1973,7 @@ function registerScan(ref, testScan, o = {}) {
   if (!cands.length) return { ok: false, verdict: 'echec', reason: 'aucun candidat', ms: nowMs() - t0, candidates: [], evals };
   const best = cands[0], alt = cands.slice(1).find(c => Math.hypot(c.pose.x - best.pose.x, c.pose.y - best.pose.y) > 0.3 || Math.abs(wrapDeg(c.pose.th - best.pose.th)) > 10);
   const ambiguity = alt ? Math.max(0, alt.merit) / Math.max(best.merit, 1e-9) : 0;
-  const lim = Object.assign({ minInl: 0.2, goodInl: 0.45, ambig: 0.8, altInl: 0.75 }, o.limits);
+  const lim = Object.assign({ minInl: 0.2, goodInl: 0.35, ambig: 0.8, altInl: 0.75 }, o.limits);
   let verdict = 'bonne', reason = '';
   let chosen = best, tied = false;
   if (alt && o.prior && ambiguity >= lim.ambig && alt.inlierFrac >= lim.altInl * best.inlierFrac) {   // ex æquo : on garde celle qui colle le mieux au mouvement prévu
@@ -1995,8 +1995,9 @@ function registerScan(ref, testScan, o = {}) {
 function composePose(a, b) { const c = Math.cos(a.th * D2R), s = Math.sin(a.th * D2R); return { x: a.x + c * b.x - s * b.y, y: a.y + s * b.x + c * b.y, th: wrapDeg(a.th + b.th) }; }
 function invPose(a) { const c = Math.cos(a.th * D2R), s = Math.sin(a.th * D2R); return { x: -(c * a.x + s * a.y), y: s * a.x - c * a.y, th: wrapDeg(-a.th) }; }
 const VERDICT_RANK = { bonne: 3, douteuse: 2, ambigue: 1, echec: 0 };
-/* cfg : { N (scans de la carte locale, 1 = scan précédent seul), radius (m), thRange (°), retry (bool) } */
-function trackerNew(cfg = {}) { return { cfg: Object.assign({ N: 1, radius: 1.0, thRange: 40, retry: true }, cfg), items: [] }; }
+/* cfg : { N (scans de la carte locale, 1 = scan précédent seul), radius (m), thRange (°), goodInl (recouvrement jugé fiable),
+   relocalize (lien perdu : recherche partout sur les scans fiables), verify (vérifier aussi les liens à faible recouvrement ou au bord de la fenêtre : plus sûr, ~1 s de plus par scan) } */
+function trackerNew(cfg = {}) { return { cfg: Object.assign({ N: 1, radius: 1.0, thRange: 40, retry: true, goodInl: 0.35, relocalize: true, verify: true }, cfg), items: [] }; }
 /* Ajoute un scan. hint (facultatif) : pose attendue (odométrie, consigne…). Renvoie le résultat de registerScan (+ pose, trusted, pass). */
 function trackerStep(tr, scan, hint) {
   const c = tr.cfg, it = tr.items, trusted = it.filter(x => x.trusted);
@@ -2007,11 +2008,23 @@ function trackerStep(tr, scan, hint) {
   if (hint) prior = hint;
   const center = hint || last.pose, gap = it.length - 1 - it.lastIndexOf(refItems[refItems.length - 1]), grow = 1 + 0.6 * gap;
   const ref = makeRefFromScans(refItems.map(x => ({ scan: x.scan, pose: x.pose })));
-  const base = { center, radius: c.radius * grow, thRange: Math.min(180, c.thRange * grow), prior };
+  const base = { center, radius: c.radius * grow, thRange: Math.min(180, c.thRange * grow), prior, limits: { goodInl: c.goodInl } };
   let res = registerScan(ref, scan, { ...base, candidates: 4, stepXY: 0.25 }), pass = 1;
-  if (c.retry && res.verdict !== 'bonne') {                           // deuxième chance : recherche plus fine et plus large
+  if (c.retry && c.relocalize === false && res.verdict !== 'bonne') {   // (sans recherche globale) deuxième chance : fenêtre plus large
     const r2 = registerScan(ref, scan, { ...base, radius: base.radius * 1.8, thRange: Math.min(180, base.thRange * 1.8), candidates: 12, stepXY: 0.15 });
-    if ((VERDICT_RANK[r2.verdict] ?? 0) > (VERDICT_RANK[res.verdict] ?? 0) || ((VERDICT_RANK[r2.verdict] ?? 0) === (VERDICT_RANK[res.verdict] ?? 0) && r2.inlierFrac > res.inlierFrac)) { r2.ms += res.ms; res = r2; pass = 2; }
+    if ((VERDICT_RANK[r2.verdict] ?? 0) > (VERDICT_RANK[res.verdict] ?? 0)) { r2.ms += res.ms; res = r2; pass = 2; }
+  }
+  const edge = !!res.pose && (Math.hypot(res.pose.x - center.x, res.pose.y - center.y) > 0.8 * base.radius || (base.thRange < 180 && Math.abs(wrapDeg(res.pose.th - center.th)) > 0.8 * base.thRange));
+  const weak = c.verify !== false && res.verdict === 'bonne' && (res.inlierFrac < 0.6 || edge);   // recouvrement faible ou position au bord de la fenêtre : la vraie position est peut-être au-delà
+  if (c.relocalize !== false && (res.verdict !== 'bonne' || weak) && trusted.length >= 2) {   // lien perdu (robot déplacé, scans manquants) : recherche sur tous les scans fiables, partout
+    const all = trusted.slice(-(c.relocN ?? 14)), refA = makeRefFromScans(all.map(x => ({ scan: x.scan, pose: x.pose })));
+    if (refA) {
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const x of all) { x0 = Math.min(x0, x.pose.x); x1 = Math.max(x1, x.pose.x); y0 = Math.min(y0, x.pose.y); y1 = Math.max(y1, x.pose.y); }
+      const radius = Math.min(12, 0.5 * Math.hypot(x1 - x0, y1 - y0) + 3);
+      const r3 = registerScan(refA, scan, { center: { x: (x0 + x1) / 2, y: (y0 + y1) / 2, th: 0 }, radius, thRange: 180, candidates: 12, limits: { ambig: 0.85, altInl: 0.8, goodInl: Math.max(c.goodInl, 0.4) } });
+      if (r3.verdict === 'bonne' && (res.verdict !== 'bonne' || r3.inlierFrac > res.inlierFrac + 0.1)) { r3.ms += res.ms; res = r3; pass = 3; }
+    }
   }
   const good = res.verdict === 'bonne', pose = (res.verdict === 'bonne' || res.verdict === 'douteuse') && res.pose ? res.pose : prior;
   it.push({ scan, pose, trusted: good, verdict: res.verdict });
@@ -2802,6 +2815,8 @@ function drawLive() {
 }
 
 function drawMap() {
+  const lay = typeof lmLayerFor === 'function' ? lmLayerFor() : null;
+  if (lay) { drawGridLines(); drawLocLayer(lay); return; }          // étape Localisation ouverte : on affiche ce sur quoi on localise
   drawGridLines();
   const rg = state.refGrid;                         // grille importée (localisation sur une grille)
   if (rg && $('layGrid').checked) {
@@ -3764,12 +3779,13 @@ function lmSyncScans() {
 }
 const lmEnable = () => { $('lmGo').disabled = !state.scans.length; };
 $('lmScan').addEventListener('change', () => { const i = +$('lmScan').value; if (state.scans[i]) { state.selected = i; renderScanList(); draw(); } });
+['regRef', 'regN', 'lmWhere'].forEach(id => $(id).addEventListener('change', () => draw()));
 function lmSetPane(p) {
   lm.pane = p;
   document.querySelectorAll('#lmTabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.pane === p ? 'true' : 'false'));
   $('lmMap').hidden = p === 'scan'; $('lmScanPane').hidden = p !== 'scan';
   if (p !== 'scan') lmRefreshPane();
-  state.refGrid && p !== 'grid' ? null : null;
+  if (state.tab === 'live') setTab('map');
   draw();
 }
 document.querySelectorAll('#lmTabs button').forEach(b => b.onclick = () => lmSetPane(b.dataset.pane));
@@ -3876,6 +3892,76 @@ function lmShow(scan, res) {
   setStatus('lmStatus', '', '');
 }
 lmSyncScans(); lmRefreshPane();
+
+
+/* ---------- fond de la carte pendant la localisation : ce sur quoi le scan est localisé ---------- */
+const lmCache = { key: '', layer: null };
+function lmLayerFor() {
+  const step = document.querySelector('.step[data-step=loc]');
+  if (!step || !step.classList.contains('open') || state.tab !== 'map' || !state.scans.length) return null;
+  const idx = +$('lmScan').value, target = state.scans[idx]; if (!target) return null;
+  const k = lm.pane, imp = lm.imp[k];
+  const posKey = state.scans.map(s => s.name + ':' + s.pose.x.toFixed(3) + ',' + s.pose.y.toFixed(3) + ',' + s.pose.th.toFixed(2) + (s.visible === false ? 'h' : '')).join(';');
+  const key = [k, target.name, imp ? imp.name + JSON.stringify(k === 'grid' ? lmGridParams() : '') : 'own', k === 'scan' ? $('regRef').value + '/' + $('regN').value : '', cellSize(), darkMq.matches, posKey].join('|');
+  if (lmCache.key === key) return lmCache.layer;
+  let layer = null;
+  try {
+    if (k === 'grid') {
+      if (imp && imp.ref) layer = { kind: 'grid', canvas: gridImage({ nx: imp.g.nx, ny: imp.g.ny, classify: () => imp.g.cls }, true), x0: imp.x0, y0: imp.y0, w: imp.g.nx * imp.res, h: imp.g.ny * imp.res, label: 'Grille : ' + imp.name };
+      else {
+        const others = state.scans.filter(s => s !== target && s.visible !== false).map(s => Object.assign({}, cleanOf(s), { pose: { ...s.pose } }));
+        const g = others.length ? gridForScans(others, cellSize(), 0.5) : null;
+        if (g) { for (const s of others) g.update(s, s.pose); layer = { kind: 'grid', canvas: gridImage(g, true), x0: g.xmin, y0: g.ymin, w: g.nx * g.res, h: g.ny * g.res, label: 'Grille faite avec les autres scans' }; }
+      }
+    } else if (k === 'vec') {
+      if (imp) layer = { kind: 'vec', segs: imp.segs, label: 'Carte vectorielle : ' + imp.name };
+      else {
+        const others = state.scans.filter(s => s !== target && s.visible !== false);
+        if (others.length) {
+          const vm = new VectorMap({ angTolDeg: +$('angTol').value, distTol: +$('distTol').value, gapTol: +$('gapTol').value });
+          for (const s of others) vm.addSegments(segmentsOf(s, mapScan(s)).map(sg => segToWorld(sg, s.pose)));
+          vm.prune(+$('minWeight').value || 1);
+          layer = { kind: 'vec', segs: vm.segments, label: 'Carte vectorielle faite avec les autres scans' };
+        }
+      }
+    } else {
+      const choice = $('regRef').value, list = regRefList(idx, choice === 'all' ? 'all' : choice);
+      const refs = list.map(it => state.scans.find(s => cleanOf(s) === it.scan)).filter(Boolean);
+      const label = choice === 'all' ? 'Tous les autres scans' : choice === 'local' ? `Carte locale : ${refs.length} scan(s) précédent(s)` : 'Scan de référence : ' + (refs.map(r => r.name).join(', ') || '–');
+      layer = { kind: 'scan', refs, label };
+    }
+  } catch (e) { layer = null; }
+  lmCache.key = key; lmCache.layer = layer; return layer;
+}
+function drawLocLayer(lay) {
+  const target = state.scans[+$('lmScan').value];
+  if (lay.kind === 'grid') {
+    const [sx, sy] = w2s(lay.x0, lay.y0 + lay.h);
+    ctx.imageSmoothingEnabled = false; ctx.drawImage(lay.canvas, sx, sy, lay.w * V().s, lay.h * V().s);
+  } else if (lay.kind === 'vec') drawSegs(lay.segs, css('--ink'), 2.5);
+  else {                                                              // scan à scan : les scans de référence en pleine couleur, les autres effacés
+    state.scans.forEach(s => {
+      if (s === target || s.visible === false) return;
+      const isRef = lay.refs.includes(s);
+      ctx.globalAlpha = isRef ? 1 : 0.1; drawPoints(worldPoints(mapScan(s), s.pose), s.color, null, isRef ? 2.4 : 1.6); ctx.globalAlpha = 1;
+      if (isRef) { drawRobot(s.pose.x, s.pose.y, s.pose.th, s.color, 8); const [sx, sy] = w2s(s.pose.x, s.pose.y); ctx.font = '600 12px ' + css('--font'); ctx.fillStyle = s.color; ctx.fillText(s.name, sx + 12, sy - 10); }
+    });
+  }
+  if (target) {                                                       // le scan à localiser, au-dessus de tout, avec sa position actuelle
+    drawPoints(worldPoints(mapScan(target), target.pose), target.color, null, 2.8);
+    drawRobot(target.pose.x, target.pose.y, target.pose.th, target.color, 12);
+    const [sx, sy] = w2s(target.pose.x, target.pose.y); ctx.font = '700 12px ' + css('--font'); ctx.fillStyle = target.color; ctx.fillText(target.name, sx + 14, sy - 12);
+  }
+  ctx.font = '600 12.5px ' + css('--font');                          // bandeau : sur quoi on localise
+  const txt = 'Localisation sur : ' + lay.label, tw = ctx.measureText(txt).width + 20;
+  ctx.fillStyle = css('--canvas'); ctx.globalAlpha = 0.9; ctx.fillRect(12, H - 40, tw, 26); ctx.globalAlpha = 1;
+  ctx.strokeStyle = css('--hair-strong'); ctx.lineWidth = 1; ctx.strokeRect(12.5, H - 39.5, tw, 26);
+  ctx.fillStyle = css('--ink'); ctx.fillText(txt, 22, H - 22);
+}
+(function () {                                                        // ouverture / fermeture de l'étape : le fond change
+  const st = document.querySelector('.step[data-step=loc]'); if (!st) return;
+  new MutationObserver(() => { lmCache.key = ''; if (st.classList.contains('open') && state.tab === 'live') setTab('map'); draw(); }).observe(st, { attributes: true, attributeFilter: ['class'] });
+})();
 
 
 if (hasSerial()) {

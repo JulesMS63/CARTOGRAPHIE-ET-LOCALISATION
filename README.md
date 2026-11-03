@@ -40,10 +40,11 @@ terminées passent en bleu avec une coche, les suivantes restent grisées. Chaqu
    - **Référence : le scan précédent (par défaut).** Chaque scan est placé par rapport à celui d'avant : c'est la méthode adaptée
      à un robot qui scanne en avançant. La liste déroulante permet de choisir un autre scan (le 1er, un scan précis), « Tous les autres scans »,
      ou **« Carte locale (N derniers scans) »** : le scan est recalé sur la carte fusionnée des N derniers scans *fiables* (N = 5 conseillé).
-     Plus précis et plus robuste que le scan précédent seul (simulation, 40 scans, bruit 1 cm : 0,5 à 1 cm d'erreur moyenne avec N = 5 contre 1 à 2,4 cm
-     avec N = 1) ; avec des scans espacés de 0,8 m, du bruit et un obstacle qui bouge, le scan précédent seul décroche (erreur de plusieurs mètres) et la carte locale tient (~1 cm).
-     La recherche est toujours bornée par le rayon et l'angle demandés, et le « mouvement prévu » (même pas que le précédent) départage deux positions
-     aussi bonnes (le scan est alors marqué « À vérifier »).
+     En simulation (bruit 1 cm, obstacle mobile) la carte locale donne ~0,5 cm d'erreur moyenne contre 1 à 2 cm avec le scan précédent seul ; sur des scans réels
+     (22 scans, ~250 à 900 points, recouvrement de 40 à 90 %) les deux donnent une carte aussi cohérente (85 % des points sur un mur, 1,2 cm) : le scan précédent reste le défaut.
+     La recherche est bornée par le rayon et l'angle demandés. Si le lien est perdu (robot déplacé de plusieurs mètres, scans manquants) ou peu sûr (recouvrement
+     < 60 % ou position au bord de la fenêtre), la page cherche **partout** sur les scans déjà fiables (≈ 1–2 s) et garde cette position si elle est nettement meilleure.
+     Le « mouvement prévu » (même pas que le précédent) départage deux positions aussi bonnes (le scan est alors marqué « À vérifier »). « Fiable » dès 35 % de recouvrement.
    - **Où chercher** : *Près de la référence* (par défaut : autour de la pose du scan de référence, rayon 1,5 m et ±45°, à adapter à la distance
      réellement parcourue entre deux scans), *Près de la pose saisie* (autour de la position tapée dans la liste) ou *Partout* (6 m, tous les angles :
      dans une salle rectangulaire la symétrie peut tromper, la page affiche alors **Ambigu** et propose les autres positions).
@@ -64,6 +65,7 @@ terminées passent en bleu avec une coche, les suivantes restent grisées. Chaqu
      `-1` inconnu, `0` libre, `≥ 1` occupé). L'origine et le carreau sont repris du nom `grille_50mm_x-1.63_y-3.90.csv` (bouton « Grille ») ou de `grille.json` (.zip) ; sinon les taper.
    - **Vectorielle** : segments faits avec les autres scans, ou **importés** (`carte_vectorielle.txt` : une ligne `x1,y1,x2,y2` par segment, en mètres).
    - **Scan à scan** : recalage sur le scan précédent, une carte locale de N scans, un scan choisi ou tous les autres (voir ci-dessous).
+   - Pendant la localisation, **le fond de la carte change** : grille, segments, ou scans de référence en couleur (les autres effacés), avec le scan à localiser par-dessus et un bandeau « Localisation sur : … ».
    - *Chercher* : **partout** sur la carte, ou près d'une position approximative (plus rapide, lève les ambiguïtés des pièces symétriques).
    - *Comparer les méthodes* (replié) : le banc d'essai du Jour 2 (14 méthodes, vérité terrain, essais multiples, courbe de sensibilité ; onglet Localisation).
    - Seuls x, y et θ sont utilisés (pas de hauteur z). En simulation : 0 à 2 cm et moins de 2° sur des scans absents de la carte (≈ 2 s partout, 0,4 s près d'une position).
