@@ -365,10 +365,13 @@
             <div class="field"><label for="distTol">Écart latéral (m)</label><input type="number" id="distTol" value="0.06" step="0.01"></div>
             <div class="field"><label for="gapTol">Trou admis (m)</label><input type="number" id="gapTol" value="0.15" step="0.01"></div>
             <div class="field"><label for="minWeight">Observations min.</label><input type="number" id="minWeight" value="1" step="1" min="1"></div>
-            <div class="field"><label for="fMinPts">Points min. par groupe</label><input type="number" id="fMinPts" value="5" step="1" min="1"></div>
-            <div class="field"><label for="fMinRange">Distance min. au capteur (m)</label><input type="number" id="fMinRange" value="0.10" step="0.01" min="0"></div>
+            <div class="field"><label for="fMinPts">Points min. par groupe</label><input type="number" id="fMinPts" value="8" step="1" min="1"></div>
+            <div class="field"><label for="fMinRange">Distance min. au capteur (m)</label><input type="number" id="fMinRange" value="0.20" step="0.01" min="0"></div>
+            <div class="field"><label for="fBreak">Écart max. entre voisins (m)</label><input type="number" id="fBreak" value="0.10" step="0.01" min="0.02"></div>
+            <div class="field"><label for="fConfTol">Tolérance de confirmation (m)</label><input type="number" id="fConfTol" value="0.10" step="0.01" min="0.02"></div>
           </div>
-          <p class="hint">Filtre des points isolés (case « Ignorer les points isolés » au-dessus de la vue) : un groupe de points voisins plus petit que « Points min. » est ignoré, comme tout point plus proche que la distance min. Les scans bruts sont conservés et <code>projet.json</code> reste brut.</p>
+          <label class="check"><input type="checkbox" id="optConfirm"> Exiger un 2<sup>e</sup> scan : ignorer ce qu'un seul scan voit</label>
+          <p class="hint">Filtre des points isolés (case « Ignorer les points isolés » au-dessus de la vue) : un groupe de points voisins plus petit que « Points min. » est ignoré, comme tout point plus proche que la distance min. ; deux voisins plus écartés que « Écart max. » ne sont pas du même groupe. « Exiger un 2e scan » retire aussi ce qui n'apparaît que dans un seul scan (personnes, reflets) : à utiliser quand les scans sont bien placés. Les scans bruts sont conservés et <code>projet.json</code> reste brut.</p>
           <label class="check"><input type="checkbox" id="autoBuild" checked> Recalculer à chaque changement</label>
           <div class="row"><button id="btnBuild" class="btn" type="button">Recalculer les cartes</button></div>
           <div class="status" id="mapStatus"></div>
@@ -560,6 +563,41 @@ function filterScan(scan, o = {}) {
   for (let i = 0; i < m; i++) size[find(i)]++;
   for (let i = 0; i < m; i++) if (size[find(i)] >= minPts) keep[idx[i]] = 1;
   return subset();
+}
+
+/* ---------- confirmation par un autre scan ----------
+   Un point n'est gardé que si au moins un AUTRE scan voit un point à moins de `tol` mètres (dans le repère de la carte).
+   Les scans reçus portent leur pose (scan.pose). Ce qui n'est vu qu'une fois (personne qui passe, reflet) disparaît ;
+   cela suppose des poses assez justes : tol doit rester plus grand que l'erreur de placement. */
+function confirmScans(scans, tol) {
+  const cell = Math.max(1e-3, tol), grid = new Map();
+  const key = (i, j) => i * 73856093 ^ j * 19349663;
+  const world = scans.map(s => worldPoints(s, s.pose));
+  world.forEach((w, k) => {
+    for (let i = 0; i < w.length; i += 2) {
+      const kk = key(Math.floor(w[i] / cell), Math.floor(w[i + 1] / cell));
+      let b = grid.get(kk); if (!b) grid.set(kk, b = []);
+      b.push(k, w[i], w[i + 1]);
+    }
+  });
+  const t2 = tol * tol;
+  return scans.map((s, k) => {
+    const w = world[k], keep = new Uint8Array(s.ranges.length);
+    let c = 0;
+    for (let n = 0; n < keep.length; n++) {
+      const x = w[2 * n], y = w[2 * n + 1], ci = Math.floor(x / cell), cj = Math.floor(y / cell);
+      outer:
+      for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
+        const b = grid.get(key(ci + di, cj + dj)); if (!b) continue;
+        for (let m = 0; m < b.length; m += 3)
+          if (b[m] !== k && (b[m + 1] - x) ** 2 + (b[m + 2] - y) ** 2 <= t2) { keep[n] = 1; c++; break outer; }
+      }
+    }
+    const out = { name: s.name, angles: new Float64Array(c), ranges: new Float64Array(c), inten: new Float64Array(c), pose: s.pose };
+    let q = 0;
+    for (let n = 0; n < keep.length; n++) if (keep[n]) { out.angles[q] = s.angles[n]; out.ranges[q] = s.ranges[n]; out.inten[q] = s.inten[n]; q++; }
+    return out;
+  });
 }
 
 /* ---------- lecture du flux série ---------- */
@@ -1475,27 +1513,45 @@ function refreshPoseInputs() {
 const cleanCache = new WeakMap();                 // scan -> { key, scan filtré }
 function cleanOn() { return $('optClean').checked; }
 function cleanParams() {
-  return { minPoints: Math.max(1, Math.round(+$('fMinPts').value || 5)), minRange: Math.max(0, +$('fMinRange').value || 0) };
+  return { minPoints: Math.max(1, Math.round(+$('fMinPts').value || 8)), minRange: Math.max(0, +$('fMinRange').value || 0),
+           breakMin: Math.max(0.02, +$('fBreak').value || 0.10) };
 }
 /* Le scan à utiliser pour tout calcul et tout dessin : filtré si la case est cochée, sinon le scan brut. */
 function cleanOf(s) {
   if (!s || !cleanOn()) return s;
-  const p = cleanParams(), key = p.minPoints + '|' + p.minRange;
+  const p = cleanParams(), key = p.minPoints + '|' + p.minRange + '|' + p.breakMin;
   let c = cleanCache.get(s);
   if (!c || c.key !== key) { c = { key, scan: filterScan(s, p) }; cleanCache.set(s, c); }
   c.scan.pose = s.pose;                           // la pose peut changer (glisser-déposer) : on la relit à chaque fois
   return c.scan;
 }
 const segCache = new WeakMap();                   // scan utilisé (brut ou filtré) -> segments locaux
-function segmentsOf(s) {
-  const c = cleanOf(s);
+function segmentsOf(s, used) {
+  const c = used || cleanOf(s);
   let g = segCache.get(c);
   if (!g) { g = extractSegments(localPoints(c)); segCache.set(c, g); }
   return g;
 }
+/* Scan utilisé pour la carte : filtré, puis (si demandé) confirmé par un autre scan. Calculé pour tous les scans
+   visibles à la fois, et mémorisé tant que les scans, leurs poses et les réglages ne changent pas. */
+let confirmCache = { key: '', map: new Map() };
+function mapScan(s) {
+  const c = cleanOf(s);
+  if (!$('optConfirm').checked || !cleanOn() || !s.visible) return c;
+  const vis = state.scans.filter(x => x.visible);
+  if (vis.length < 2) return c;
+  const tol = Math.max(0.02, +$('fConfTol').value || 0.10);
+  const key = tol + '|' + vis.map(x => { const u = cleanOf(x); return x.name + ':' + x.pose.x.toFixed(4) + ',' + x.pose.y.toFixed(4) + ',' + x.pose.th.toFixed(3) + ':' + u.ranges.length + ':' + (cleanCache.get(x)?.key ?? ''); }).join(';');
+  if (confirmCache.key !== key) {
+    const res = confirmScans(vis.map(cleanOf), tol), map = new Map();
+    vis.forEach((x, i) => map.set(x, res[i]));
+    confirmCache = { key, map };
+  }
+  return confirmCache.map.get(s) || c;
+}
 function ignoredCount(scans) {
   if (!cleanOn()) return 0;
-  let n = 0; for (const s of scans) n += s.ranges.length - cleanOf(s).ranges.length;
+  let n = 0; for (const s of scans) n += s.ranges.length - mapScan(s).ranges.length;
   return n;
 }
 
@@ -1512,12 +1568,12 @@ function rebuild() {
     setStatus('mapStatus', ''); draw(); updateChrome(); updateTimeline(); return;
   }
   const t0 = performance.now();
-  const used = vis.map(cleanOf);                    // scans filtrés (ou bruts si la case est décochée)
+  const used = vis.map(mapScan);                    // scans filtrés (ou bruts si la case est décochée)
   const grid = gridForScans(used, parseFloat($('gridRes').value), 0.5, { forget: parseFloat($('gridForget').value) || 1 });
   for (const s of used) grid.update(s, s.pose);
   const vm = new VectorMap({ angTolDeg: +$('angTol').value, distTol: +$('distTol').value, gapTol: +$('gapTol').value });
   for (const s of vis) {
-    vm.addSegments(segmentsOf(s).map(sg => segToWorld(sg, s.pose)));
+    vm.addSegments(segmentsOf(s, mapScan(s)).map(sg => segToWorld(sg, s.pose)));
   }
   vm.prune(+$('minWeight').value || 1);
   state.grid = grid; state.vmap = vm;
@@ -1645,9 +1701,9 @@ function drawMap() {
   }
   if ($('laySeg').checked && state.vmap) drawSegs(state.vmap.segments, css('--ink'), 1.5);
   if ($('layPts').checked) {                      // les points par-dessus : une couleur par scan, le scan choisi au-dessus
-    state.scans.forEach((s, i) => { if (s.visible && i !== state.selected) drawPoints(worldPoints(cleanOf(s), s.pose), s.color, null, 2.0); });
+    state.scans.forEach((s, i) => { if (s.visible && i !== state.selected) drawPoints(worldPoints(mapScan(s), s.pose), s.color, null, 2.0); });
     const sel = state.scans[state.selected];
-    if (sel && sel.visible) drawPoints(worldPoints(cleanOf(sel), sel.pose), sel.color, null, 2.3);
+    if (sel && sel.visible) drawPoints(worldPoints(mapScan(sel), sel.pose), sel.color, null, 2.3);
   }
   ctx.font = '600 12px ' + css('--font');
   state.scans.forEach((s, i) => {
@@ -1739,7 +1795,7 @@ function fitView() {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const s of state.scans) {
     if (!s.visible) continue;
-    const p = worldPoints(cleanOf(s), s.pose);
+    const p = worldPoints(mapScan(s), s.pose);
     for (let i = 0; i < p.length; i += 2) { x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); y0 = Math.min(y0, p[i + 1]); y1 = Math.max(y1, p[i + 1]); }
   }
   if (!isFinite(x0)) { Object.assign(state.view.map, { cx: 3, cy: 2, s: 80 }); draw(); return; }
@@ -1892,7 +1948,7 @@ async function exportZip() {
   ensureMaps();
   const enc = new TextEncoder(), files = [];
   const add = (name, text) => files.push({ name, data: enc.encode(text) });
-  for (const s of state.scans) add(`scans/${s.name}.csv`, scanToCSV(cleanOf(s)));
+  for (const s of state.scans) add(`scans/${s.name}.csv`, scanToCSV(mapScan(s)));
   add('poses.json', JSON.stringify(posesObject(), null, 2) + '\n');
   add('projet.json', JSON.stringify(projectObject()) + '\n');
   if (state.vmap) add('carte_vectorielle.txt', vectorMapToTxt(state.vmap.segments));
@@ -1923,7 +1979,7 @@ $('btnZip').onclick = exportZip;
 $('btnExpScan').onclick = () => {
   const s = state.tab === 'map' && state.scans[state.selected] ? state.scans[state.selected] : state.live;
   if (!s) { toast('Aucun scan à exporter'); return; }
-  download((s.name === 'live' ? 'scan_live' : s.name) + '.csv', scanToCSV(cleanOf(s)), 'text/csv');
+  download((s.name === 'live' ? 'scan_live' : s.name) + '.csv', scanToCSV(state.scans.includes(s) ? mapScan(s) : cleanOf(s)), 'text/csv');
   markExported('Scan exporté');
 };
 $('btnExpVec').onclick = () => { ensureMaps(); if (state.vmap) { download('carte_vectorielle.txt', vectorMapToTxt(state.vmap.segments)); markExported('Carte vectorielle exportée'); } else toast('Aucun scan à exporter'); };
@@ -1933,7 +1989,7 @@ $('btnExpPng').onclick = async () => { const b = await canvasPngBlob(); if (b) {
   if (id === 'optLiveSeg' && state.live) state.liveSegs = $(id).checked ? segmentsOf(state.live) : [];
   draw();
 }));
-['optClean', 'fMinPts', 'fMinRange'].forEach(id => $(id).addEventListener('change', () => {
+['optClean', 'fMinPts', 'fMinRange', 'fBreak', 'fConfTol', 'optConfirm'].forEach(id => $(id).addEventListener('change', () => {
   if (id !== 'optClean') flags.tuned = true;
   if (state.live) state.liveSegs = $('optLiveSeg').checked ? segmentsOf(state.live) : [];
   rebuild(); updateChrome();                       // rebuild() redessine aussi
