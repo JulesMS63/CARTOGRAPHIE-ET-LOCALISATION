@@ -41,6 +41,7 @@
 #include <WebServer.h>
 #include <WebSocketsServer.h>
 #include <ld06.h>
+#include <Preferences.h>
 #include "MecanumCar_v2.h"
 
 // --- Lidar ---
@@ -69,6 +70,7 @@ const uint8_t PIN_MOTEUR[8] = {5, 18, 19, 21, 2, 4, 16, 17};   // M1A M1B M2A M2
 const char*   NOM_ROUE[4]   = {"avant gauche (M2)", "avant droit (M1)", "arriere gauche (M3)", "arriere droit (M4)"};
 const uint8_t MOTEUR_DE_ROUE[4] = {2, 1, 3, 4};   // avant gauche = M2, avant droit = M1, arrière gauche = M3, arrière droit = M4
 int8_t sensMoteur[4] = {1, 1, 1, 1};              // M1..M4 : -1 pour inverser le sens d'un moteur
+Preferences memoire;                              // les « inverser » de la page de test sont gardés après un redémarrage
 
 // Façon d'envoyer le PWM
 enum { MODE_BIB = 0, MODE_LENT = 1, MODE_GPIO = 2 };
@@ -335,7 +337,7 @@ const char PAGE_TEST[] PROGMEM = R"rawliteral(<!doctype html>
  button{font:inherit;padding:8px 12px;border:1px solid #b9c0cc;border-radius:8px;background:#fff;cursor:pointer;margin:3px 3px 3px 0}
  button:active{background:#dce6ff} button.stop{background:#c0301f;color:#fff;border-color:#c0301f;font-weight:600}
  #etat{font-weight:600} #log{font:12px ui-monospace,monospace;white-space:pre-wrap;background:#10151f;color:#cfe3ff;border-radius:8px;padding:8px;height:130px;overflow:auto}
- small{color:#5b6577}
+ small{color:#5b6577} label{white-space:nowrap}
 </style></head><body>
 <h1>Test PWM du robot</h1>
 <small>Ce que tu règles ici part vers les moteurs (PWM direct sur les broches, ou I2C selon le mode). Si la liaison coupe, tout s'arrête seul au bout de 3 s. Robot soulevé pour les premiers essais.</small>
@@ -349,7 +351,9 @@ const char PAGE_TEST[] PROGMEM = R"rawliteral(<!doctype html>
 
 <div class="carte"><h2 style="margin-top:0">Avancer / reculer (les 4 moteurs)</h2>
  <div class="ligne" style="grid-template-columns:78px 1fr 42px"><span>Puissance</span><input type="range" id="puiss" min="60" max="255" value="200"><output id="puissV">200</output></div>
- <button id="av">Avancer 1 s</button><button id="re">Reculer 1 s</button><button class="stop" id="stop">STOP</button>
+ <button id="av">4 moteurs avant 1 s</button><button id="re">4 moteurs arrière 1 s</button><button class="stop" id="stop">STOP</button>
+ <h2>Mouvements du robot (posé au sol, 1 s)</h2><small>Les roues mecanum ne tournent pas toutes dans le même sens pour translater : c'est le sketch qui le gère.</small>
+ <div id="mouv"></div>
  <h2>Un moteur à la fois (0,7 s)</h2><small>Si la roue tourne dans le mauvais sens pour « avant », coche « inverser ».</small><div id="unm"></div></div>
 
 <div class="carte"><h2 style="margin-top:0">Les 8 canaux PWM (0 à 255)</h2>
@@ -362,8 +366,9 @@ const char PAGE_TEST[] PROGMEM = R"rawliteral(<!doctype html>
 const $=id=>document.getElementById(id), noms=['M1A','M1B','M2A','M2B','M3A','M3B','M4A','M4B'];
 function log(t){const l=$('log');l.textContent+=t+'\n';l.scrollTop=l.scrollHeight}
 async function api(p){try{const r=await fetch(p);const t=await r.text();log(p+'  ->  '+t);
-  if(/mode=/.test(t)){$('etat').textContent=t.replace(/^.*\| /,'');
-  const m=/mode=GPIO/.test(t)?2:/mode=I2C lent/.test(t)?1:0;document.querySelector('input[name=mode][value="'+m+'"]').checked=true}return t}
+  if(/mode=/.test(t)){$('etat').textContent=t.replace(/^.*\| /,'').replace(/ sens=.*$/,'');
+  const m=/mode=GPIO/.test(t)?2:/mode=I2C lent/.test(t)?1:0;document.querySelector('input[name=mode][value="'+m+'"]').checked=true;
+  const sm=/sens=(-?1),(-?1),(-?1),(-?1)/.exec(t);if(sm)document.querySelectorAll('input.sens').forEach(c=>c.checked=sm[+c.dataset.m]==='-1')}return t}
  catch(e){log('Pas de réponse du robot ('+e.message+')');$('etat').textContent='Robot injoignable : es-tu connecté au réseau Robot-LiDAR ?'}}
 const cv=[0,0,0,0,0,0,0,0], sl=[];
 noms.forEach((n,i)=>{const d=document.createElement('div');d.className='ligne';
@@ -380,11 +385,15 @@ $('puiss').oninput=()=>{$('puissV').textContent=$('puiss').value};
 const P=()=>$('puiss').value;
 $('av').onclick=()=>api('/avance?v='+P()+'&ms=1000');
 $('re').onclick=()=>api('/avance?v=-'+P()+'&ms=1000');
+const nomM=['','avant droit','avant gauche','arrière gauche','arrière droit'];
 for(let m=1;m<=4;m++){const b=document.createElement('div');
- b.innerHTML='<button>M'+m+' avant</button><button>M'+m+' arrière</button> <label><input type="checkbox"> inverser M'+m+'</label>';
+ b.innerHTML='<b style="display:inline-block;min-width:118px">M'+m+' · '+nomM[m]+'</b><button>avant</button><button>arrière</button> <label><input type="checkbox" class="sens" data-m="'+m+'"> inverser</label>';
  const[bb1,bb2]=b.querySelectorAll('button');b.querySelector('input').onchange=e=>api('/sens?m='+m+'&s='+(e.target.checked?-1:1));
  bb1.onclick=()=>api('/moteur?m='+m+'&v='+P()+'&ms=700');bb2.onclick=()=>api('/moteur?m='+m+'&v=-'+P()+'&ms=700');
  $('unm').appendChild(b)}
+const pct=()=>Math.round(P()/2.55);
+[['Avancer',1,0,0],['Reculer',-1,0,0],['Translation gauche',0,1,0],['Translation droite',0,-1,0],['Tourne à gauche',0,0,1],['Tourne à droite',0,0,-1]].forEach(([n,x,y,w])=>{
+ const b=document.createElement('button');b.textContent=n;b.onclick=()=>api('/mouv?vx='+x+'&vy='+y+'&w='+w+'&v='+pct()+'&ms=1000');$('mouv').appendChild(b)});
 document.querySelectorAll('input[name=mode]').forEach(r=>r.onchange=()=>api('/mode?m='+r.value));
 $('ack').onclick=()=>api('/ack');
 api('/ack');
@@ -401,12 +410,14 @@ int argEntier(const char* nom, int defaut) {
 
 // « mode=... » : ce que la page affiche en haut
 void repondreEtat(const char* debut) {
-  char buf[200];
+  char buf[240];
+  char sens[40];
+  snprintf(sens, sizeof(sens), "sens=%d,%d,%d,%d", sensMoteur[0], sensMoteur[1], sensMoteur[2], sensMoteur[3]);
   if (modeMoteur == MODE_GPIO)
-    snprintf(buf, sizeof(buf), "%s | mode=GPIO direct (PWM sur D5 D18 D19 D21 D2 D4 D16 D17)", debut);
+    snprintf(buf, sizeof(buf), "%s | mode=GPIO direct (PWM sur D5 D18 D19 D21 D2 D4 D16 D17) %s", debut, sens);
   else
-    snprintf(buf, sizeof(buf), "%s | mode=%s carte=%s", debut, nomMode(),
-             carteRepond() ? "repond (ACK)" : "NE REPOND PAS");
+    snprintf(buf, sizeof(buf), "%s | mode=%s carte=%s %s", debut, nomMode(),
+             carteRepond() ? "repond (ACK)" : "NE REPOND PAS", sens);
   repondre(buf);
 }
 
@@ -450,6 +461,20 @@ void handleAvance() {
   repondreEtat(t);
 }
 
+// /mouv?vx=&vy=&w=&v=&ms= : un mouvement complet (comme le pavé de lidar_web.html), pendant ms millisecondes
+// vx : 1 avancer, -1 reculer | vy : 1 gauche, -1 droite | w : 1 tourne à gauche, -1 tourne à droite | v : vitesse en %
+void handleMouv() {
+  int vx = argEntier("vx", 0), vy = argEntier("vy", 0), w = argEntier("w", 0);
+  int v = argEntier("v", VITESSE_DEFAUT_PCT);
+  int ms = constrain(argEntier("ms", 1000), 50, 3000);
+  arreterTout();
+  piloter(vx, vy, w, v);
+  essaiManuel = true; essaiFinMs = millis() + ms;
+  char t[80]; snprintf(t, sizeof(t), "mouvement vx=%d vy=%d w=%d v=%d%% pendant %d ms", vx, vy, w, v, ms);
+  Serial.printf("Page test : %s\n", t);
+  repondreEtat(t);
+}
+
 void handleStop() {
   arreterTout();
   Serial.println("Page test : stop");
@@ -475,6 +500,9 @@ void handleMode() {
 void handleSens() {
   int m = constrain(argEntier("m", 1), 1, 4);
   sensMoteur[m - 1] = argEntier("s", 1) < 0 ? -1 : 1;
+  uint8_t masque = 0;
+  for (int i = 0; i < 4; i++) if (sensMoteur[i] < 0) masque |= (1 << i);
+  memoire.putUChar("sens", masque);      // gardé après un redémarrage
   char t[90];
   snprintf(t, sizeof(t), "sens M%d = %d  (sensMoteur = {%d, %d, %d, %d})", m, sensMoteur[m - 1],
            sensMoteur[0], sensMoteur[1], sensMoteur[2], sensMoteur[3]);
@@ -538,6 +566,9 @@ void commandeSerie() {
 // Le Wi-Fi démarre EN PREMIER pour que le réseau « Robot-LiDAR » existe quoi qu'il arrive.
 void setup() {
   if (modeMoteur == MODE_GPIO) gpioActiver(true);   // moteurs à l'arrêt (PWM à 0) dès le démarrage
+  memoire.begin("robot", false);
+  uint8_t masque = memoire.getUChar("sens", 0);
+  for (int i = 0; i < 4; i++) sensMoteur[i] = (masque >> i) & 1 ? -1 : 1;
   Serial.begin(115200);
   delay(300);
   Serial.println();
@@ -558,6 +589,7 @@ void setup() {
   server.on("/stop", HTTP_GET, handleStop);
   server.on("/mode", HTTP_GET, handleMode);
   server.on("/sens", HTTP_GET, handleSens);
+  server.on("/mouv", HTTP_GET, handleMouv);
   server.on("/ack", HTTP_GET, handleAck);
   server.begin();
   webSocket.begin();
@@ -580,6 +612,7 @@ void setup() {
     if (cartePresente(car)) Serial.println("[4/4] La carte moteur repond (ACK)");
     else Serial.println("[4/4] !! La carte moteur ne repond pas. Batteries ? Interrupteur de la carte ?");
   }
+  Serial.printf("Sens des moteurs (page de test, « inverser ») : M1=%d M2=%d M3=%d M4=%d\n", sensMoteur[0], sensMoteur[1], sensMoteur[2], sensMoteur[3]);
   Serial.println("Commandes serie : t = test des roues (robot souleve), f = avance 1 s, x = arret, i = chercher la carte (I2C)");
 }
 
@@ -595,7 +628,7 @@ void loop() {
   }
 
   // Arrêt automatique : plus d'ordre récent (touche relâchée, Wi-Fi coupé)
-  if (enMouvement()) {
+  if (enMouvement() && !essaiManuel) {
     if (millis() - dernierOrdreMs > DELAI_ARRET_MS) {
       arreter();
     } else if (millis() - dernierRafraichissementMs > 1000) {

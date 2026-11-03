@@ -115,10 +115,11 @@ Le curseur **Vitesse** (v18) règle la vitesse des 4 roues : si les petits moteu
 Lidar en direct par WebSocket (port 81), réception des ordres `D,vx,vy,w,v` / `S`, arrêt automatique 300 ms sans ordre.
 Les moteurs reçoivent le **PWM directement sur les 8 broches** (M1A = D5, M1B = D18, M2A = D19, M2B = D21, M3A = D2, M3B = D4, M4A = D16, M4B = D17 ;
 M1 avant droit, M2 avant gauche, M3 arrière gauche, M4 arrière droit). Les montages I2C (bibliothèque `MecanumCar_v2`, ou I2C plus lent) restent
-sélectionnables pour comparer. Le sketch n'a pas encore été validé sur le robot : seul le montage GPIO direct est à confirmer.
+sélectionnables pour comparer. Le sketch n'est pas encore validé sur le robot : le sens de chaque moteur se règle avec les cases « inverser » de la page de test.
 
 **Page de test PWM** : connecté au réseau `Robot-LiDAR`, ouvrir `http://192.168.4.1/` : choix du mode, 8 curseurs (M1A à M4B), avancer / reculer, un moteur à la fois,
-case « inverser » par moteur (à reporter dans `sensMoteur`). Tout s'arrête seul 3 s après la perte de la liaison.
+case « inverser » par moteur (enregistrée dans l'ESP32, conservée après redémarrage), boutons de mouvement (avancer, translations, rotations, 1 s) pour valider la
+matrice mecanum au sol. Tout s'arrête seul 3 s après la perte de la liaison.
 Bibliothèques : LD06 (archive du TP), WebSockets (Markus Sattler), MecanumCar_v2 (module).
 
 ### Jour 2 : localisation (onglet Localisation de `lidar_web.html`)
