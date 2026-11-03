@@ -244,7 +244,11 @@
   .badge.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
   .badge.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
   [hidden] { display: none !important; }
-  .gmbox { display: grid; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid var(--hair); }
+  .lmtabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; padding: 3px; border: 1px solid var(--hair-strong); border-radius: 10px; background: var(--chalk); }
+  .lmtabs button { all: unset; cursor: pointer; text-align: center; padding: 8px 4px; border-radius: 7px; font: 600 13px/1 var(--font); color: var(--muted); }
+  .lmtabs button[aria-selected=true] { background: var(--blue); color: #fff; }
+  .lmtabs button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .lmpane { display: grid; gap: 8px; }
   .regbox { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hair); display: grid; gap: 8px; }
   .regres { display: grid; gap: 6px; font-size: 13px; }
   .regres .alts { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -400,27 +404,6 @@
             <input type="file" id="fileImport" multiple accept=".csv,.txt,.json" hidden>
           </div>
           <p class="hint">Dans l'onglet Carte, cochez « Glisser : le scan choisi », puis faites glisser (Maj pour tourner). Flèches, <code>,</code> et <code>.</code> affinent la pose.</p>
-          <div class="regbox">
-            <div class="lab">Retrouver la position automatiquement</div>
-            <p class="hint">La page recale le scan choisi dans la liste sur le scan précédent (par défaut), sur un scan au choix, ou sur la carte des N derniers scans : pas besoin de mesurer sa position. Le scan précédent est le plus simple ; la carte locale (N ≈ 5) est plus précise et plus robuste quand un obstacle bouge ou que les scans sont espacés. C'est la méthode adaptée à un robot qui scanne en avançant.</p>
-            <div class="grid2">
-              <div class="field"><label for="regRef">Scan de référence</label><select id="regRef"></select></div>
-              <div class="field"><label for="regN">N (carte locale)</label><input type="number" id="regN" value="5" min="2" max="12" step="1" disabled></div>
-              <div class="field"><label for="regMode">Où chercher</label><select id="regMode">
-                <option value="ref">Près de la référence</option>
-                <option value="near">Près de la pose saisie</option>
-                <option value="wide">Partout</option></select></div>
-              <div class="field"><label for="regRadius">Rayon (m)</label><input type="number" id="regRadius" value="1.5" min="0.2" max="10" step="0.1"></div>
-              <div class="field"><label for="regAngle">Angle ± (°)</label><input type="number" id="regAngle" value="45" min="2" max="180" step="5"></div>
-            </div>
-            <div class="row">
-              <button class="btn primary" id="btnReg" type="button">Retrouver le scan choisi</button>
-              <button class="btn sm" id="btnRegAll" type="button" title="Recale tous les scans d'un coup, du premier au dernier">Recaler tous les scans</button>
-              <button class="btn sm" id="btnRegUndo" type="button" hidden>Annuler</button>
-            </div>
-            <div class="status" id="regStatus" aria-live="polite"></div>
-            <div id="regResult"></div>
-          </div>
         </div></div></div>
       </section>
     </li>
@@ -483,42 +466,63 @@
         <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
       <section class="card">
         <h2 class="step-h"><button type="button" class="head" aria-expanded="false" aria-controls="b-loc">
-          <span><span class="t">Localisation (Jour 2)</span><span class="s" data-summary></span></span>
+          <span><span class="t">Localisation</span><span class="s" data-summary></span></span>
           <span class="chip" data-chip></span>
           <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg>
         </button></h2>
         <div class="body" id="b-loc"><div class="inner"><div class="pad">
-          <div class="gmbox">
-            <div class="lab">Localiser le robot sur une grille importée</div>
-            <p class="hint">Importez une grille (<code>grille.csv</code> exportée par cette page), puis choisissez un scan : la page retrouve où était le robot dans cette grille (x, y et orientation θ).</p>
-            <div class="row">
-              <button class="btn sm" id="btnGmImport" type="button">Importer une grille (.csv)</button>
-              <button class="btn sm" id="btnGmClear" type="button" hidden>Retirer la grille</button>
-              <input type="file" id="fileGm" accept=".csv,.txt,.json" multiple hidden>
-            </div>
-            <p class="hint" id="gmInfo">Aucune grille importée.</p>
-            <div class="grid3">
-              <div class="field"><label for="gmRes">Carreau (mm)</label><input type="number" id="gmRes" value="50" min="5" max="500" step="1"></div>
-              <div class="field"><label for="gmX0">Coin x₀ (m)</label><input type="number" id="gmX0" value="0" step="0.05"></div>
-              <div class="field"><label for="gmY0">Coin y₀ (m)</label><input type="number" id="gmY0" value="0" step="0.05"></div>
-            </div>
-            <p class="hint">x₀, y₀ : position, dans le repère de la carte, du coin bas-gauche de la grille. Elles sont reprises automatiquement si le nom du fichier les contient (export de cette page) ou si la grille est celle de la carte affichée.</p>
-            <div class="grid2">
-              <div class="field"><label for="gmScan">Scan à localiser</label><select id="gmScan"></select></div>
-              <div class="field"><label for="gmWhere">Où chercher</label><select id="gmWhere"><option value="all">Sur toute la grille</option><option value="near">Près d'une position</option></select></div>
-            </div>
-            <div class="grid3" id="gmNearBox" hidden>
-              <div class="field"><label for="gmNx">x approx. (m)</label><input type="number" id="gmNx" value="0" step="0.1"></div>
-              <div class="field"><label for="gmNy">y approx. (m)</label><input type="number" id="gmNy" value="0" step="0.1"></div>
-              <div class="field"><label for="gmNr">Rayon (m)</label><input type="number" id="gmNr" value="1.5" min="0.2" max="10" step="0.1"></div>
-            </div>
-            <div class="row">
-              <button class="btn primary" id="btnGmLocate" type="button" disabled>Localiser le robot</button>
-              <button class="btn sm" id="btnGmUndo" type="button" hidden>Annuler</button>
-            </div>
-            <div class="status" id="gmStatus" aria-live="polite"></div>
-            <div id="gmResult"></div>
+          <div class="lmtabs" role="tablist" id="lmTabs" aria-label="Type de localisation">
+            <button type="button" role="tab" data-pane="grid" aria-selected="true">Grille</button>
+            <button type="button" role="tab" data-pane="vec" aria-selected="false">Vectorielle</button>
+            <button type="button" role="tab" data-pane="scan" aria-selected="false">Scan à scan</button>
           </div>
+          <div class="field"><label for="lmScan">Scan à localiser</label><select id="lmScan"></select></div>
+          <div class="lmpane" id="lmMap">
+            <p class="hint" id="lmSrcTxt">Carte faite avec les autres scans.</p>
+            <div class="row">
+              <button class="btn sm" id="lmImport" type="button">Importer un fichier</button>
+              <button class="btn sm" id="lmClear" type="button" hidden>Retirer</button>
+              <input type="file" id="lmFile" accept=".csv,.txt,.json" multiple hidden>
+            </div>
+            <div class="grid3" id="lmGridMeta" hidden>
+              <div class="field"><label for="lmRes">Carreau (mm)</label><input type="number" id="lmRes" value="50" min="5" max="500" step="1"></div>
+              <div class="field"><label for="lmX0">Coin x₀ (m)</label><input type="number" id="lmX0" value="0" step="0.05"></div>
+              <div class="field"><label for="lmY0">Coin y₀ (m)</label><input type="number" id="lmY0" value="0" step="0.05"></div>
+            </div>
+            <div class="field"><label for="lmWhere">Chercher</label><select id="lmWhere"><option value="all">Partout</option><option value="near">Près de…</option></select></div>
+            <div class="grid3" id="lmNearBox" hidden>
+              <div class="field"><label for="lmNx">x (m)</label><input type="number" id="lmNx" value="0" step="0.1"></div>
+              <div class="field"><label for="lmNy">y (m)</label><input type="number" id="lmNy" value="0" step="0.1"></div>
+              <div class="field"><label for="lmNr">Rayon (m)</label><input type="number" id="lmNr" value="1.5" min="0.2" max="10" step="0.1"></div>
+            </div>
+            <div class="row">
+              <button class="btn primary" id="lmGo" type="button">Localiser</button>
+              <button class="btn sm" id="lmUndo" type="button" hidden>Annuler</button>
+            </div>
+            <div class="status" id="lmStatus" aria-live="polite"></div>
+            <div id="lmResult"></div>
+          </div>
+          <div class="lmpane" id="lmScanPane" hidden>
+            <div class="grid2" style="grid-template-columns: 2fr 1fr">
+              <div class="field"><label for="regRef">Référence</label><select id="regRef"></select></div>
+              <div class="field"><label for="regN">N scans</label><input type="number" id="regN" value="5" min="2" max="12" step="1" disabled></div>
+              <div class="field"><label for="regMode">Chercher</label><select id="regMode">
+                <option value="ref">Autour de la référence</option>
+                <option value="near">Autour de la pose saisie</option>
+                <option value="wide">Partout</option></select></div>
+              <div class="field"><label for="regRadius">Rayon (m)</label><input type="number" id="regRadius" value="1.5" min="0.2" max="10" step="0.1"></div>
+              <div class="field"><label for="regAngle">Angle ± (°)</label><input type="number" id="regAngle" value="45" min="2" max="180" step="5"></div>
+            </div>
+            <div class="row">
+              <button class="btn primary" id="btnReg" type="button">Localiser</button>
+              <button class="btn sm" id="btnRegAll" type="button" title="Tous les scans, du premier au dernier">Tous les scans</button>
+              <button class="btn sm" id="btnRegUndo" type="button" hidden>Annuler</button>
+            </div>
+            <div class="status" id="regStatus" aria-live="polite"></div>
+            <div id="regResult"></div>
+          </div>
+          <details class="sub" id="locBench"><summary>Comparer les méthodes</summary>
+            <div class="subbody">
           <button class="btn primary" id="btnGoLoc" type="button">Ouvrir l'onglet Localisation</button>
           <div>
             <div class="lab" style="margin-bottom:6px">Données de test</div>
@@ -601,6 +605,8 @@
           <div class="status" id="locStatus" aria-live="polite"></div>
           <div class="row"><button class="btn sm" id="btnLocCsv" type="button">Résultats (.csv)</button></div>
           <p class="hint">Toutes les méthodes cochées partent de la même pose initiale. Le temps ne compte que la localisation (pas la préparation de la carte, indiquée à part). Dans les essais multiples, le scan localisé n'est jamais dans la carte de référence.</p>
+            </div>
+          </details>
         </div></div></div>
       </section>
     </li>
@@ -2063,6 +2069,33 @@ function metaFromGridName(name) {
   const m = String(name).match(/_(\d+(?:\.\d+)?)mm_x(-?\d+(?:\.\d+)?)_y(-?\d+(?:\.\d+)?)/i);
   return m ? { res_m: +m[1] / 1000, x0: +m[2], y0: +m[3] } : null;
 }
+
+/* ---------- carte vectorielle : segments {x1,y1,x2,y2} (m) ---------- */
+/* Fichier : une ligne « x1,y1,x2,y2 » par segment (carte_vectorielle.txt exporté par la page) ; les lignes # sont des commentaires. */
+function parseVecTxt(text) {
+  const segs = [];
+  for (const raw of String(text).split(/\r?\n/)) {
+    const l = raw.trim(); if (!l || l[0] === '#') continue;
+    const f = l.split(/[,;\s]+/).filter(t => t !== '').map(Number);
+    if (f.length >= 4 && f.slice(0, 4).every(Number.isFinite)) segs.push({ x1: f[0], y1: f[1], x2: f[2], y2: f[3] });
+  }
+  if (segs.length < 3) throw new Error('le fichier ne contient pas de segments (une ligne « x1,y1,x2,y2 » par segment)');
+  return segs;
+}
+function makeRefFromSegments(segs, step = 0.02) {
+  const Pa = [], Na = [];
+  for (const s of segs) {
+    const dx = s.x2 - s.x1, dy = s.y2 - s.y1, L = Math.hypot(dx, dy); if (!(L > 1e-6)) continue;
+    const nx = -dy / L, ny = dx / L, m = Math.max(1, Math.ceil(L / step));
+    for (let k = 0; k <= m; k++) { const t = k / m; Pa.push(s.x1 + dx * t, s.y1 + dy * t); Na.push(nx, ny); }
+  }
+  if (Pa.length < 40) return null;
+  const P = Float64Array.from(Pa), N = Float64Array.from(Na);
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (let i = 0; i < P.length; i += 2) { x0 = Math.min(x0, P[i]); x1 = Math.max(x1, P[i]); y0 = Math.min(y0, P[i + 1]); y1 = Math.max(y1, P[i + 1]); }
+  const fres = Math.max(0.02, Math.max(x1 - x0, y1 - y0) / 1500);       // champ de distance : carreaux plus gros si la carte est très grande
+  return { P, N, items: [], index: new PointIndex(P), field: fieldFromPoints(P, fres, 1.5), n: 1, poses: [], fromVec: true };
+}
 /* CORE-END */
 
 /* ======================================================================
@@ -2078,7 +2111,7 @@ const state = {
   scans: [], selected: -1, live: null, tab: 'live',
   view: { live: { cx: 0, cy: 0, s: 60, auto: true }, map: { cx: 3, cy: 2, s: 80 } },
   wipe: 0.5, gridStats: null,
-  grid: null, vmap: null, gridCanvas: null, refGrid: null, queue: 0, counters: {},
+  grid: null, vmap: null, gridCanvas: null, refGrid: null, refSegs: null, queue: 0, counters: {},
   port: null, reader: null, readLoopPromise: null, connected: false, stop: false,
   connState: 'idle', portLabel: '', bytes: 0, gotScan: false, monText: '', monDirty: false, timers: [],
   simTimer: null, scanTimes: [], liveSegs: [], rebuildTimer: null, colorIdx: 0, mapMsg: '', currentStep: undefined,
@@ -2469,7 +2502,7 @@ function renderScanList() {
   box.innerHTML = '';
   if (!state.scans.length) {
     box.innerHTML = '<div class="empty-list">Aucun scan pour l’instant.</div>';
-    if (typeof locRefreshSelects === 'function') { locRefreshSelects(); regRefreshSelects(); gmRefreshScans(); }
+    if (typeof locRefreshSelects === 'function') { locRefreshSelects(); regRefreshSelects(); lmSyncScans(); }
     return;
   }
   state.scans.forEach((s, i) => {
@@ -2499,7 +2532,7 @@ function renderScanList() {
     });
     box.appendChild(el);
   });
-  if (typeof locRefreshSelects === 'function') { locRefreshSelects(); regRefreshSelects(); gmRefreshScans(); }
+  if (typeof locRefreshSelects === 'function') { locRefreshSelects(); regRefreshSelects(); lmSyncScans(); }
 }
 function touchPose() { if (!flags.posed) { flags.posed = true; updateTimeline(); } }
 function refreshPoseInputs() {
@@ -2776,6 +2809,7 @@ function drawMap() {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(rg.canvas, sx, sy, rg.g.nx * rg.res * V().s, rg.g.ny * rg.res * V().s);
   }
+  if (state.refSegs && $('laySeg').checked) drawSegs(state.refSegs, css('--seg'), 2);   // carte vectorielle importée
   const g = state.grid;
   if (g && state.gridCanvas && $('layGrid').checked) {
     const [sx, sy] = w2s(g.xmin, g.ymin + g.ny * g.res);
@@ -2918,6 +2952,7 @@ function fitView() {
     const p = worldPoints(mapScan(s), s.pose);
     for (let i = 0; i < p.length; i += 2) { x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); y0 = Math.min(y0, p[i + 1]); y1 = Math.max(y1, p[i + 1]); }
   }
+  if (state.refSegs) for (const q of state.refSegs) { x0 = Math.min(x0, q.x1, q.x2); x1 = Math.max(x1, q.x1, q.x2); y0 = Math.min(y0, q.y1, q.y2); y1 = Math.max(y1, q.y1, q.y2); }
   if (state.refGrid) { const r = state.refGrid; x0 = Math.min(x0, r.x0); y0 = Math.min(y0, r.y0); x1 = Math.max(x1, r.x0 + r.g.nx * r.res); y1 = Math.max(y1, r.y0 + r.g.ny * r.res); }
   if (!isFinite(x0)) { Object.assign(state.view.map, { cx: 3, cy: 2, s: 80 }); draw(); return; }
   const v = state.view.map;
@@ -3583,10 +3618,10 @@ const REG_LABEL = { bonne: ['Fiable', 'ok'], douteuse: ['À vérifier', 'warn'],
 const regPoseTxt = p => `x ${fmt(p.x, 2)} m · y ${fmt(p.y, 2)} m · θ ${fmt(p.th, 1)}°`;
 function regRefreshSelects() {
   const sel = $('regRef'), cur = sel.value;
-  sel.innerHTML = '<option value="prev">Le scan précédent (par défaut)</option>'
-    + (state.scans.length > 2 ? '<option value="local">Carte locale (N derniers scans)</option>' : '')
+  sel.innerHTML = '<option value="prev">Scan précédent</option>'
+    + (state.scans.length > 2 ? '<option value="local">N derniers scans</option>' : '')
     + state.scans.map((s, i) => `<option value="${i}">${esc(s.name)}${i === 0 ? ' (1er scan)' : ''}</option>`).join('')
-    + (state.scans.length > 2 ? '<option value="all">Tous les autres scans</option>' : '');
+    + (state.scans.length > 2 ? '<option value="all">Tous les autres</option>' : '');
   sel.value = [...sel.options].some(o => o.value === cur) ? cur : 'prev'; regSyncN();
   $('btnReg').disabled = $('btnRegAll').disabled = state.scans.length < 2 || reg.busy;
 }
@@ -3718,92 +3753,129 @@ function regAfterCapture() {
 regRefreshSelects();
 
 
-/* ================= Localiser le robot sur une grille importée ================= */
-const gm = { undoable: false };
-function gmRefreshScans() {
-  const sel = $('gmScan'), cur = sel.value;
+/* ================= Localisation (étape 6) : Grille · Vectorielle · Scan à scan ================= */
+const lm = { pane: 'grid', imp: { grid: null, vec: null } };           // imp.grid : {g, name, meta, ref} ; imp.vec : {segs, name, ref}
+function lmSyncScans() {
+  const sel = $('lmScan'), cur = sel.value;
   sel.innerHTML = state.scans.map((s, i) => `<option value="${i}">${esc(s.name)}</option>`).join('') || '<option value="">(aucun scan)</option>';
-  const keep = [...sel.options].some(o => o.value === cur) ? cur : String(state.selected >= 0 ? state.selected : Math.max(0, state.scans.length - 1));
-  if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
-  $('btnGmLocate').disabled = !state.refGrid || !state.scans.length;
+  const want = state.selected >= 0 ? String(state.selected) : (cur || String(Math.max(0, state.scans.length - 1)));
+  if ([...sel.options].some(o => o.value === want)) sel.value = want;
+  lmEnable();
 }
-$('gmWhere').addEventListener('change', () => { $('gmNearBox').hidden = $('gmWhere').value !== 'near'; });
-$('btnGmImport').onclick = () => $('fileGm').click();
-$('fileGm').onchange = async e => { const files = [...e.target.files]; e.target.value = ''; await gmImport(files); };
-async function gmImport(files) {
-  const csv = files.find(f => /\.(csv|txt)$/i.test(f.name)), js = files.find(f => /\.json$/i.test(f.name));
-  if (!csv) { setStatus('gmStatus', 'Choisissez un fichier .csv (la grille).', 'err'); return; }
-  let g; try { g = parseGridCsv(await csv.text()); } catch (err) { setStatus('gmStatus', 'Grille illisible : ' + err.message + '.', 'err'); return; }
-  let meta = metaFromGridName(csv.name), src = meta ? 'nom du fichier' : '';
-  if (js) { try { const m = JSON.parse(await js.text()); if (m && isFinite(m.res_m) && isFinite(m.x0) && isFinite(m.y0)) { meta = m; src = js.name; } } catch (_) { /* ignoré */ } }
-  if (!meta && state.grid && state.grid.nx === g.nx && state.grid.ny === g.ny) { meta = { res_m: state.grid.res, x0: state.grid.xmin, y0: state.grid.ymin }; src = 'la carte affichée (mêmes dimensions)'; }
-  if (meta) { $('gmRes').value = Math.round(meta.res_m * 1000); $('gmX0').value = +meta.x0.toFixed(3); $('gmY0').value = +meta.y0.toFixed(3); }
-  gm.g = g; gm.name = csv.name; gm.fromMeta = src;
-  gmBuild();
-  $('btnGmClear').hidden = false;
+const lmEnable = () => { $('lmGo').disabled = !state.scans.length; };
+$('lmScan').addEventListener('change', () => { const i = +$('lmScan').value; if (state.scans[i]) { state.selected = i; renderScanList(); draw(); } });
+function lmSetPane(p) {
+  lm.pane = p;
+  document.querySelectorAll('#lmTabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.pane === p ? 'true' : 'false'));
+  $('lmMap').hidden = p === 'scan'; $('lmScanPane').hidden = p !== 'scan';
+  if (p !== 'scan') lmRefreshPane();
+  state.refGrid && p !== 'grid' ? null : null;
+  draw();
+}
+document.querySelectorAll('#lmTabs button').forEach(b => b.onclick = () => lmSetPane(b.dataset.pane));
+function lmRefreshPane() {
+  const k = lm.pane, imp = lm.imp[k];
+  $('lmImport').textContent = k === 'grid' ? 'Importer une grille (.csv)' : 'Importer des segments (.txt)';
+  $('lmFile').accept = k === 'grid' ? '.csv,.txt,.json' : '.txt,.csv';
+  $('lmClear').hidden = !imp; $('lmGridMeta').hidden = !(k === 'grid' && imp);
+  $('lmSrcTxt').textContent = imp ? (k === 'grid' ? `${imp.name} : ${imp.g.nx} × ${imp.g.ny} carreaux` + (imp.meta ? '' : ' · origine à vérifier') : `${imp.name} : ${imp.segs.length} segments`) : 'Carte faite avec les autres scans.';
+  lmSetOverlay();
+}
+function lmSetOverlay() {                                         // la carte importée s'affiche dans l'onglet Carte
+  const gi = lm.imp.grid, vi = lm.imp.vec;
+  state.refGrid = gi && gi.ref ? { g: gi.g, res: gi.res, x0: gi.x0, y0: gi.y0, canvas: gridImage({ nx: gi.g.nx, ny: gi.g.ny, classify: () => gi.g.cls }, true) } : null;
+  state.refSegs = vi ? vi.segs : null;
+}
+$('lmWhere').addEventListener('change', () => { $('lmNearBox').hidden = $('lmWhere').value !== 'near'; });
+$('lmImport').onclick = () => $('lmFile').click();
+$('lmFile').onchange = async e => { const files = [...e.target.files]; e.target.value = ''; await lmImport(files); };
+async function lmImport(files) {
+  const k = lm.pane, csv = files.find(f => /\.(csv|txt)$/i.test(f.name)), js = files.find(f => /\.json$/i.test(f.name));
+  if (!csv) { setStatus('lmStatus', 'Choisissez un fichier .' + (k === 'grid' ? 'csv' : 'txt') + '.', 'err'); return; }
+  try {
+    const text = await csv.text();
+    if (k === 'vec') {
+      const segs = parseVecTxt(text), ref = makeRefFromSegments(segs);
+      if (!ref) throw new Error('trop peu de murs');
+      lm.imp.vec = { segs, name: csv.name, ref };
+    } else {
+      const g = parseGridCsv(text); let meta = metaFromGridName(csv.name);
+      if (js) { try { const m = JSON.parse(await js.text()); if (m && isFinite(m.res_m) && isFinite(m.x0) && isFinite(m.y0)) meta = m; } catch (_) { /* ignoré */ } }
+      if (!meta && state.grid && state.grid.nx === g.nx && state.grid.ny === g.ny) meta = { res_m: state.grid.res, x0: state.grid.xmin, y0: state.grid.ymin };
+      if (meta) { $('lmRes').value = Math.round(meta.res_m * 1000); $('lmX0').value = +meta.x0.toFixed(3); $('lmY0').value = +meta.y0.toFixed(3); }
+      lm.imp.grid = { g, name: csv.name, meta: !!meta };
+      lmBuildGrid();
+      if (!lm.imp.grid) return;
+    }
+  } catch (err) { setStatus('lmStatus', 'Fichier illisible : ' + err.message + '.', 'err'); return; }
+  setStatus('lmStatus', '', ''); lmRefreshPane();
   if (state.tab === 'live') setTab('map');
   fitView();
 }
-function gmParams() {
+function lmGridParams() {
   const num = (id, d, lo, hi) => { const v = parseFloat($(id).value); return isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
-  return { res: num('gmRes', 50, 5, 500) / 1000, x0: num('gmX0', 0, -1e4, 1e4), y0: num('gmY0', 0, -1e4, 1e4) };
+  return { res: num('lmRes', 50, 5, 500) / 1000, x0: num('lmX0', 0, -1e4, 1e4), y0: num('lmY0', 0, -1e4, 1e4) };
 }
-function gmBuild() {                                               // (re)construit la référence quand la grille ou ses réglages changent
-  if (!gm.g) return;
-  const P = gmParams(), ref = makeRefFromGrid(gm.g, P.res, P.x0, P.y0);
-  if (!ref) { state.refGrid = null; setStatus('gmStatus', 'Cette grille contient trop peu de cases occupées (murs) pour localiser un scan.', 'err'); gmInfo(); draw(); return; }
-  const pseudo = { nx: gm.g.nx, ny: gm.g.ny, classify: () => gm.g.cls };
-  gm.ref = ref; state.refGrid = { g: gm.g, res: P.res, x0: P.x0, y0: P.y0, canvas: gridImage(pseudo, true) };
-  gmInfo(); gmRefreshScans(); draw();
-  setStatus('gmStatus', 'Grille prête. Choisissez un scan puis « Localiser le robot ».', 'ok');
+function lmBuildGrid() {
+  const im = lm.imp.grid; if (!im) return;
+  const P = lmGridParams(), ref = makeRefFromGrid(im.g, P.res, P.x0, P.y0);
+  if (!ref) { lm.imp.grid = null; setStatus('lmStatus', 'Cette grille ne contient pas assez de murs.', 'err'); lmRefreshPane(); return; }
+  Object.assign(im, P, { ref });
 }
-function gmInfo() {
-  const g = gm.g; if (!g) { $('gmInfo').textContent = 'Aucune grille importée.'; return; }
-  const P = gmParams();
-  $('gmInfo').textContent = `${gm.name} : ${g.nx} × ${g.ny} carreaux de ${Math.round(P.res * 1000)} mm (${fmt(g.nx * P.res, 1)} × ${fmt(g.ny * P.res, 1)} m), ${g.occ} occupés.` + (gm.fromMeta ? ` Origine reprise de : ${gm.fromMeta}.` : ' Origine non trouvée : vérifiez le carreau et le coin x₀, y₀.');
-}
-['gmRes', 'gmX0', 'gmY0'].forEach(id => $(id).addEventListener('change', () => { gm.fromMeta = ''; gmBuild(); }));
-$('btnGmClear').onclick = () => { gm.g = gm.ref = null; state.refGrid = null; $('btnGmClear').hidden = true; gmInfo(); gmRefreshScans(); setStatus('gmStatus', 'Grille retirée.', ''); $('gmResult').innerHTML = ''; draw(); };
-$('btnGmUndo').onclick = () => { $('btnRegUndo').click(); $('btnGmUndo').hidden = true; $('gmResult').innerHTML = ''; setStatus('gmStatus', 'Position précédente rétablie.', 'ok'); };
+['lmRes', 'lmX0', 'lmY0'].forEach(id => $(id).addEventListener('change', () => { if (lm.imp.grid) { lm.imp.grid.meta = true; lmBuildGrid(); lmRefreshPane(); draw(); } }));
+$('lmClear').onclick = () => { lm.imp[lm.pane] = null; setStatus('lmStatus', '', ''); $('lmResult').innerHTML = ''; lmRefreshPane(); draw(); };
+$('lmUndo').onclick = () => { $('btnRegUndo').click(); $('lmUndo').hidden = true; $('lmResult').innerHTML = ''; setStatus('lmStatus', 'Position rétablie.', 'ok'); };
 
-function gmLocate() {
-  if (!gm.ref) { setStatus('gmStatus', 'Importez d’abord une grille.', 'err'); return; }
-  const idx = +$('gmScan').value, scan = state.scans[idx]; if (!scan) { setStatus('gmStatus', 'Choisissez un scan à localiser.', 'err'); return; }
-  const near = $('gmWhere').value === 'near' ? { x: parseFloat($('gmNx').value) || 0, y: parseFloat($('gmNy').value) || 0, radius: Math.max(0.2, parseFloat($('gmNr').value) || 1.5) } : null;
-  $('btnGmLocate').disabled = true; setStatus('gmStatus', `Recherche de la position de ${scan.name} sur la grille…`, '');
+/* carte de référence : fichier importé, sinon faite avec tous les autres scans (à leur pose actuelle) */
+function lmRef(kind, target) {
+  const imp = lm.imp[kind]; if (imp && imp.ref) return imp.ref;
+  const others = state.scans.filter(s => s !== target && s.visible !== false);
+  if (!others.length) return null;
+  if (kind === 'grid') {
+    const sc = others.map(s => Object.assign({}, cleanOf(s), { pose: { ...s.pose } })), g = gridForScans(sc, cellSize(), 0.5);
+    if (!g) return null;
+    for (const s of sc) g.update(s, s.pose);
+    return makeRefFromGrid({ nx: g.nx, ny: g.ny, cls: g.classify() }, g.res, g.xmin, g.ymin);
+  }
+  const vm = new VectorMap({ angTolDeg: +$('angTol').value, distTol: +$('distTol').value, gapTol: +$('gapTol').value });
+  for (const s of others) vm.addSegments(segmentsOf(s, mapScan(s)).map(sg => segToWorld(sg, s.pose)));
+  vm.prune(+$('minWeight').value || 1);
+  return makeRefFromSegments(vm.segments);
+}
+function lmGo() {
+  const idx = +$('lmScan').value, scan = state.scans[idx]; if (!scan) { setStatus('lmStatus', 'Choisissez un scan.', 'err'); return; }
+  const kind = lm.pane, near = $('lmWhere').value === 'near' ? { x: parseFloat($('lmNx').value) || 0, y: parseFloat($('lmNy').value) || 0, radius: Math.max(0.2, parseFloat($('lmNr').value) || 1.5) } : null;
+  $('lmGo').disabled = true; setStatus('lmStatus', 'Recherche…', '');
   setTimeout(() => {
     let res;
-    try { res = locateOnGrid(gm.ref, cleanOf(scan), near ? { near } : {}); } catch (e) { setStatus('gmStatus', 'La localisation a échoué : ' + e.message, 'err'); gmRefreshScans(); return; }
-    gmRefreshScans();
-    state.selected = idx; renderScanList();
-    gmShow(scan, res);
+    try {
+      const ref = lmRef(kind, scan);
+      if (!ref) { lmEnable(); setStatus('lmStatus', 'Pas de carte : il faut au moins un autre scan, ou un fichier importé.', 'err'); return; }
+      res = locateOnGrid(ref, cleanOf(scan), near ? { near } : {});
+    } catch (e) { lmEnable(); setStatus('lmStatus', 'Échec : ' + e.message, 'err'); return; }
+    lmEnable(); state.selected = idx; renderScanList(); lmShow(scan, res);
   }, 40);
 }
-$('btnGmLocate').onclick = gmLocate;
-function gmShow(scan, res) {
+$('lmGo').onclick = lmGo;
+function lmShow(scan, res) {
   const [lab, cls] = REG_LABEL[res.verdict];
   if (res.verdict === 'echec' || !res.pose) {
-    $('gmResult').innerHTML = `<div class="regres"><div><span class="badge ko">Échec</span> ${esc(res.reason || 'aucune position trouvée')}. La position de ${esc(scan.name)} n’a pas été modifiée.</div>
-      <div class="hint">Vérifiez le carreau et le coin x₀, y₀ de la grille, ou que le scan a été pris dans la zone cartographiée.</div></div>`;
-    setStatus('gmStatus', `${scan.name} : aucune position trouvée.`, 'err'); return;
+    $('lmResult').innerHTML = `<div class="regres"><div><span class="badge ko">Échec</span> Position non modifiée.</div></div>`;
+    setStatus('lmStatus', 'Aucune position trouvée.', 'err'); return;
   }
-  regApply([{ scan, pose: res.pose }]);
-  $('btnGmUndo').hidden = false;
+  regApply([{ scan, pose: res.pose }]); $('lmUndo').hidden = false;
   const alts = res.candidates.slice(1).filter(c => Math.hypot(c.pose.x - res.pose.x, c.pose.y - res.pose.y) > 0.3 || Math.abs(wrapDeg(c.pose.th - res.pose.th)) > 10).slice(0, 3);
-  const altHtml = res.verdict === 'bonne' || !alts.length ? '' :
-    `<div class="hint">Autres positions possibles (cliquez pour essayer) :</div><div class="alts">${alts.map((c, k) => `<button class="btn sm" type="button" data-alt="${k}">${esc(regPoseTxt(c.pose))} · ${Math.round(100 * c.inlierFrac)} %</button>`).join('')}</div>`;
-  $('gmResult').innerHTML = `<div class="regres"><div><span class="badge ${cls}">${lab}</span> <b>${esc(scan.name)}</b></div>
+  const altHtml = res.verdict === 'bonne' || !alts.length ? '' : `<div class="alts">${alts.map((c, k) => `<button class="btn sm" type="button" data-alt="${k}">${esc(regPoseTxt(c.pose))}</button>`).join('')}</div>`;
+  $('lmResult').innerHTML = `<div class="regres"><div><span class="badge ${cls}">${lab}</span></div>
     <div style="font-size:15px;margin:4px 0"><b>x = ${fmt(res.pose.x, 3)} m</b> · <b>y = ${fmt(res.pose.y, 3)} m</b> · θ = ${fmt(res.pose.th, 1)}°</div>
-    <div class="hint">${Math.round(100 * res.inlierFrac)} % des points du scan tombent sur un mur de la grille (à 5 cm)${isFinite(res.rms) ? ` · écart moyen ${fmt(res.rms * 100, 1)} cm` : ''} · ${fmt(res.ms / 1000, 1)} s${res.reason ? ` · ${esc(res.reason)}` : ''}</div>${altHtml}
-    ${res.verdict === 'bonne' ? '' : '<div class="hint">Pour lever le doute, choisissez « Près d’une position » et tapez où se trouvait approximativement le robot.</div>'}</div>`;
-  $('gmResult').querySelectorAll('[data-alt]').forEach(b => b.onclick = () => {
-    const c = alts[+b.dataset.alt], prev = reg.undo; regApply([{ scan, pose: c.pose }]); reg.undo = prev || reg.undo;
-    $('btnRegUndo').hidden = false; $('btnGmUndo').hidden = false; setStatus('gmStatus', `${scan.name} : autre position appliquée.`, 'ok');
+    <div class="hint">${Math.round(100 * res.inlierFrac)} % des points sur la carte${res.verdict === 'bonne' ? '' : ' · ' + esc(res.reason || '')}</div>${altHtml}</div>`;
+  $('lmResult').querySelectorAll('[data-alt]').forEach(b => b.onclick = () => {
+    const c = alts[+b.dataset.alt], prev = reg.undo; regApply([{ scan, pose: c.pose }]); reg.undo = prev || reg.undo; $('btnRegUndo').hidden = false; $('lmUndo').hidden = false;
   });
   if (state.tab === 'live') setTab('map');
-  setStatus('gmStatus', res.verdict === 'bonne' ? `${scan.name} localisé : x ${fmt(res.pose.x, 2)} m, y ${fmt(res.pose.y, 2)} m.` : `${scan.name} placé, à vérifier : ${res.reason}.`, res.verdict === 'bonne' ? 'ok' : 'warn');
+  setStatus('lmStatus', '', '');
 }
-gmRefreshScans();
+lmSyncScans(); lmRefreshPane();
 
 
 if (hasSerial()) {

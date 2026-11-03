@@ -2,7 +2,7 @@
 const fs = require('fs'), assert = require('assert');
 const html = fs.readFileSync(process.argv[2], 'utf8');
 const core = html.split('/* CORE-START */')[1].split('/* CORE-END */')[0];
-const A = new Function(core + '; return {benchDataset, gridForScans, gridToCSV, parseGridCsv, makeRefFromGrid, locateOnGrid, poseError, gridMeta, gridFileName, metaFromGridName};')();
+const A = new Function(core + '; return {benchDataset, gridForScans, gridToCSV, parseGridCsv, makeRefFromGrid, locateOnGrid, poseError, gridMeta, gridFileName, metaFromGridName, parseVecTxt, makeRefFromSegments, VectorMap, extractSegments, localPoints, segToWorld, vectorMapToTxt};')();
 let n = 0; const ok = (c, m) => { assert(c, m); n++; };
 
 // --- lecture d'une grille : rangée du haut en premier, -1 inconnu / 0 libre / ≥1 occupé
@@ -34,6 +34,21 @@ for (const t of data.slice(4)) {
   ok(e2.pos < 0.05 && e2.ang < 2 && r2.verdict === 'bonne', t.name + ' : près d’une position approximative, x/y à ' + (100 * e2.pos).toFixed(1) + ' cm');
   okNear++;
 }
+// --- carte vectorielle : fichier de segments, puis localisation
+const vm = new A.VectorMap({ angTolDeg: 10, distTol: 0.06, gapTol: 0.15 });
+data.slice(0, 4).forEach(m => vm.addSegments(A.extractSegments(A.localPoints(m.scan), {}).map(sg => A.segToWorld(sg, m.truth)))); vm.prune(1);
+const segs = A.parseVecTxt(A.vectorMapToTxt(vm.segments));
+ok(segs.length === vm.segments.length && segs.length >= 8, 'carte vectorielle relue : ' + segs.length + ' segments');
+let e3 = ''; try { A.parseVecTxt('# rien\n1,2\n'); } catch (e) { e3 = e.message; } ok(/segments/.test(e3), 'fichier sans segments : message clair');
+const vref = A.makeRefFromSegments(segs);
+ok(vref && vref.fromVec && vref.N.length === vref.P.length, 'référence construite depuis les segments');
+for (const t of data.slice(4)) {
+  const r = A.locateOnGrid(vref, t.scan), e = r.pose ? A.poseError(r.pose, t.truth) : { pos: 9, ang: 9 };
+  ok(r.verdict !== 'echec' && e.pos < 0.05 && e.ang < 2, t.name + ' : carte vectorielle, partout, x/y à ' + (100 * e.pos).toFixed(1) + ' cm, θ à ' + e.ang.toFixed(1) + '°');
+  const r2 = A.locateOnGrid(vref, t.scan, { near: { x: t.truth.x - 0.8, y: t.truth.y + 0.6, radius: 1.5 } }), e2 = r2.pose ? A.poseError(r2.pose, t.truth) : { pos: 9, ang: 9 };
+  ok(e2.pos < 0.05 && e2.ang < 2, t.name + ' : carte vectorielle, près d’une position, x/y à ' + (100 * e2.pos).toFixed(1) + ' cm');
+}
+ok(A.makeRefFromSegments([{ x1: 0, y1: 0, x2: 0.1, y2: 0 }]) === null, 'trop peu de murs : pas de référence');
 // --- une grille vide ou presque est refusée proprement
 ok(A.makeRefFromGrid({ nx: 10, ny: 10, cls: new Int8Array(100) }, 0.05, 0, 0) === null, 'grille sans mur : pas de référence');
 console.log('grid_test : ' + n + ' vérifications OK');
