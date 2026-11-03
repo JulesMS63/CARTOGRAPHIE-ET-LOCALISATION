@@ -501,6 +501,59 @@ function worldPoints(scan, pose) {
   return out;
 }
 
+/* ---------- filtre des points isolés (même algorithme que scanfilter.py) ----------
+   1. distance minimale : on retire les points plus proches que minRange du capteur ;
+   2. groupes : chaque point est relié à ses `reach` voisins suivants (balayage circulaire) quand l'écart
+      ne dépasse pas max(breakMin, breakK * rMin * pas * dTheta) ; les points reliés forment un groupe, et
+      un groupe de moins de minPoints points disparaît. */
+function filterScan(scan, o = {}) {
+  const minPts = o.minPoints ?? 5, minRange = o.minRange ?? 0.10;
+  const breakMin = o.breakMin ?? 0.15, breakK = o.breakK ?? 4.0, reach = o.reach ?? 2;
+  const n = scan.ranges.length, keep = new Uint8Array(n);
+  const idx = [];
+  for (let i = 0; i < n; i++) if (scan.ranges[i] >= minRange) idx.push(i);
+  const m = idx.length;
+  const subset = () => {
+    let c = 0; for (let i = 0; i < n; i++) c += keep[i];
+    const out = { name: scan.name, angles: new Float64Array(c), ranges: new Float64Array(c),
+                  inten: new Float64Array(c), pose: scan.pose };
+    let k = 0;
+    for (let i = 0; i < n; i++) if (keep[i]) { out.angles[k] = scan.angles[i]; out.ranges[k] = scan.ranges[i]; out.inten[k] = scan.inten[i]; k++; }
+    return out;
+  };
+  if (m === 0) return subset();
+  if (m < 2) { if (m >= minPts) keep[idx[0]] = 1; return subset(); }
+
+  const px = new Float64Array(m), py = new Float64Array(m), rr = new Float64Array(m), an = new Float64Array(m);
+  for (let k = 0; k < m; k++) {
+    rr[k] = scan.ranges[idx[k]]; an[k] = scan.angles[idx[k]];
+    px[k] = rr[k] * Math.cos(an[k]); py[k] = rr[k] * Math.sin(an[k]);
+  }
+  const steps = [];
+  for (let k = 1; k < m; k++) steps.push(Math.abs(an[k] - an[k - 1]));
+  steps.sort((a, b) => a - b);
+  const h = steps.length;
+  const dTheta = h % 2 ? steps[(h - 1) / 2] : (steps[h / 2 - 1] + steps[h / 2]) / 2;
+
+  const parent = new Int32Array(m);
+  for (let i = 0; i < m; i++) parent[i] = i;
+  const find = a => { while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; };
+  for (let step = 1; step <= Math.min(reach, m - 1); step++) {
+    for (let i = 0; i < m; i++) {
+      const j = (i + step) % m;
+      const gap = Math.hypot(px[j] - px[i], py[j] - py[i]);
+      if (gap <= Math.max(breakMin, breakK * Math.min(rr[i], rr[j]) * step * dTheta)) {
+        const a = find(i), b = find(j);
+        if (a !== b) parent[a] = b;
+      }
+    }
+  }
+  const size = new Int32Array(m);
+  for (let i = 0; i < m; i++) size[find(i)]++;
+  for (let i = 0; i < m; i++) if (size[find(i)] >= minPts) keep[idx[i]] = 1;
+  return subset();
+}
+
 /* ---------- lecture du flux série ---------- */
 class LidarParser {
   /* onScan(rows) reçoit [[angle_deg, distance_mm, intensité], ...] */
@@ -553,14 +606,25 @@ class LidarParser {
 }
 
 /* ---------- import de fichiers (formats ESP32, maison, RobotControl, MapTool) ---------- */
+/* Ligne de position écrite en tête des fichiers .csv exportés :  # pose: x=1.2000 y=0.5000 theta=30.0000
+   (x, y en mètres, theta en degrés, repère de l'origine). Les autres lecteurs la voient comme un commentaire. */
+function parsePoseComment(line) {
+  if (!/^#\s*pose\b/i.test(line)) return null;
+  const num = k => { const m = line.match(new RegExp('\\b' + k + '\\s*=\\s*(-?\\d+(?:\\.\\d+)?(?:[eE][-+]?\\d+)?)', 'i')); return m ? Number(m[1]) : null; };
+  const x = num('x'), y = num('y'), th = num('theta') ?? num('th');
+  return x === null || y === null || th === null ? null : { x, y, th };
+}
+function poseComment(pose) {
+  return `# pose: x=${pose.x.toFixed(4)} y=${pose.y.toFixed(4)} theta=${pose.th.toFixed(4)}`;
+}
 function parseScanText(text, stem) {
   let fmt = 'esp32';
-  const blocks = [];
-  let cur = [];
+  const blocks = [], poses = [];
+  let cur = [], seenPose = null;
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
-    if (line === '') { if (cur.length) { blocks.push(cur); cur = []; } continue; }
-    if (line.startsWith('#')) continue;
+    if (line === '') { if (cur.length) { blocks.push(cur); poses.push(seenPose); cur = []; seenPose = null; } continue; }
+    if (line.startsWith('#')) { const q = parsePoseComment(line); if (q) seenPose = q; continue; }
     const f = line.split(',').map(s => s.trim());
     if (!isFinite(Number(f[0])) || f[0] === '') {
       const low = line.toLowerCase();
@@ -572,7 +636,7 @@ function parseScanText(text, stem) {
     }
     cur.push(f.map(Number));
   }
-  if (cur.length) blocks.push(cur);
+  if (cur.length) { blocks.push(cur); poses.push(seenPose); }
   const scans = [];
   blocks.forEach((rows, k) => {
     rows = rows.filter(r => r.length >= 3);
@@ -583,7 +647,9 @@ function parseScanText(text, stem) {
     else if (fmt === 'robotcontrol') { ang = rows.map(r => r[0]); dist = rows.map(r => r[1]); inten = rows.map(r => r[2]); }
     else { ang = rows.map(r => r[0]); dist = rows.map(r => r[1]); inten = rows.map(() => 255); }
     const name = blocks.length === 1 ? stem : `${stem}_${String(k).padStart(3, '0')}`;
-    scans.push(makeScan(name, ang, dist, inten));
+    const scan = makeScan(name, ang, dist, inten);
+    if (poses[k]) { scan.pose = { ...poses[k] }; scan.poseFromFile = true; }     // la position suit le fichier
+    scans.push(scan);
   });
   return scans;
 }
@@ -898,7 +964,9 @@ function gridForScans(scans, res, margin = 0.5, o = {}) {
 
 /* ---------- CSV / texte d'export ---------- */
 function scanToCSV(scan) {
-  const lines = ['angle_deg,distance_mm,intensity'];
+  const lines = [];
+  if (scan.pose && scan.name !== 'live') lines.push(poseComment(scan.pose));        // position du scan, conservée dans le fichier
+  lines.push('angle_deg,distance_mm,intensity');
   for (let i = 0; i < scan.ranges.length; i++)
     lines.push(`${(scan.angles[i] * R2D).toFixed(3)},${Math.round(scan.ranges[i] * 1000)},${Math.round(scan.inten[i])}`);
   return lines.join('\n') + '\n';
