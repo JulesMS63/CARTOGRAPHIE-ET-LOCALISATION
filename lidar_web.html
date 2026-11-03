@@ -156,12 +156,15 @@
   .empty-list { color: var(--muted); font-size: 13px; padding: 4px 0; }
 
   /* ---------- zone principale ---------- */
-  .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 10px 16px; background: var(--chalk); border-bottom: 1px solid var(--hair); }
+  .toolbar { display: flex; gap: 10px 10px; align-items: center; flex-wrap: wrap; padding: 10px 14px; background: var(--chalk); border-bottom: 1px solid var(--hair); }
   .seg { display: inline-flex; padding: 3px; gap: 2px; border: 1px solid var(--hair-strong); border-radius: 11px; background: var(--mist); }
-  .seg button { all: unset; box-sizing: border-box; cursor: pointer; font: 600 13.5px/1 var(--font); padding: 8px 18px; border-radius: 8px; color: var(--muted); }
+  .seg button { all: unset; box-sizing: border-box; cursor: pointer; font: 600 13.5px/1 var(--font); padding: 8px 15px; border-radius: 8px; color: var(--muted); }
   .seg button[aria-selected=true] { background: var(--blue); color: var(--blue-ink); }
   .seg button:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
-  .toolbar .opts { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .toolbar .opts { display: flex; gap: 6px 10px; align-items: center; flex-wrap: wrap; }
+  .toolbar .check { white-space: nowrap; }
+  .toolbar #btnFit { margin-left: auto; }
+  .toolbar .lbl { font-size: 13px; color: var(--muted); white-space: nowrap; }
   .vsep { width: 1px; height: 22px; background: var(--hair); }
   .stage { position: relative; flex: 1; min-height: 0; background: var(--canvas); }
   canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
@@ -338,7 +341,7 @@
             <button id="btnClear" class="btn sm danger" type="button">Tout effacer</button>
             <input type="file" id="fileImport" multiple accept=".csv,.txt,.json" hidden>
           </div>
-          <p class="hint">Dans l'onglet Carte, choisissez « Déplacer le scan choisi », puis faites glisser (Maj pour tourner). Flèches, <code>,</code> et <code>.</code> affinent la pose.</p>
+          <p class="hint">Dans l'onglet Carte, cochez « Glisser : le scan choisi », puis faites glisser (Maj pour tourner). Flèches, <code>,</code> et <code>.</code> affinent la pose.</p>
         </div></div></div>
       </section>
     </li>
@@ -362,7 +365,10 @@
             <div class="field"><label for="distTol">Écart latéral (m)</label><input type="number" id="distTol" value="0.06" step="0.01"></div>
             <div class="field"><label for="gapTol">Trou admis (m)</label><input type="number" id="gapTol" value="0.15" step="0.01"></div>
             <div class="field"><label for="minWeight">Observations min.</label><input type="number" id="minWeight" value="1" step="1" min="1"></div>
+            <div class="field"><label for="fMinPts">Points min. par groupe</label><input type="number" id="fMinPts" value="5" step="1" min="1"></div>
+            <div class="field"><label for="fMinRange">Distance min. au capteur (m)</label><input type="number" id="fMinRange" value="0.10" step="0.01" min="0"></div>
           </div>
+          <p class="hint">Filtre des points isolés (case « Ignorer les points isolés » au-dessus de la vue) : un groupe de points voisins plus petit que « Points min. » est ignoré, comme tout point plus proche que la distance min. Les scans bruts sont conservés et <code>projet.json</code> reste brut.</p>
           <label class="check"><input type="checkbox" id="autoBuild" checked> Recalculer à chaque changement</label>
           <div class="row"><button id="btnBuild" class="btn" type="button">Recalculer les cartes</button></div>
           <div class="status" id="mapStatus"></div>
@@ -389,7 +395,7 @@
             <button id="btnExpGrid" class="btn sm" type="button">Grille</button>
             <button id="btnExpPng" class="btn sm" type="button">Image</button>
           </div>
-          <p class="hint">Le .zip contient <code>scans/*.csv</code>, <code>poses.json</code>, la carte vectorielle, la grille, une image et un <code>projet.json</code> ré-importable. Les outils Python le lisent directement.</p>
+          <p class="hint">Le .zip contient <code>scans/*.csv</code> (chacun garde sa position dans sa première ligne : réimporté, le scan est replacé tout seul), <code>poses.json</code>, la carte vectorielle, la grille, une image et un <code>projet.json</code> ré-importable. Les outils Python le lisent directement.</p>
         </div></div></div>
       </section>
     </li>
@@ -411,10 +417,12 @@
       <label class="check"><input type="checkbox" id="layGrid" checked> Grille</label>
       <label class="check"><input type="checkbox" id="laySeg" checked> Segments</label>
       <span class="vsep"></span>
-      <label class="check"><input type="radio" name="mode" value="view" checked> Déplacer la vue</label>
-      <label class="check"><input type="radio" name="mode" value="scan"> Déplacer le scan choisi</label>
+      <span class="lbl">Glisser :</span>
+      <label class="check" title="Faire glisser la souris déplace la vue"><input type="radio" name="mode" value="view" checked> la vue</label>
+      <label class="check" title="Faire glisser la souris déplace le scan choisi (Maj : le tourner)"><input type="radio" name="mode" value="scan"> le scan choisi</label>
     </div>
-    <span style="flex:1"></span>
+    <span class="vsep"></span>
+    <label class="check" title="Retire les points seuls ou en tout petit groupe, et ceux collés au capteur"><input type="checkbox" id="optClean" checked> Ignorer les points isolés</label>
     <button class="btn sm" id="btnFit" type="button">Ajuster la vue</button>
   </div>
   <div class="stage">
@@ -1320,7 +1328,7 @@ function ingest(rows) {
   if (state.queue > 0) { captureScan(scan); state.queue--; }
   if (!$('optFreeze').checked) {
     state.live = scan;
-    state.liveSegs = $('optLiveSeg').checked ? extractSegments(localPoints(scan)) : [];
+    state.liveSegs = $('optLiveSeg').checked ? segmentsOf(scan) : [];
     if (state.tab === 'live') draw();
   }
   updateChrome();
@@ -1463,6 +1471,34 @@ function refreshPoseInputs() {
   });
 }
 
+/* ---------- filtre des points isolés (voir filterScan dans le noyau) ---------- */
+const cleanCache = new WeakMap();                 // scan -> { key, scan filtré }
+function cleanOn() { return $('optClean').checked; }
+function cleanParams() {
+  return { minPoints: Math.max(1, Math.round(+$('fMinPts').value || 5)), minRange: Math.max(0, +$('fMinRange').value || 0) };
+}
+/* Le scan à utiliser pour tout calcul et tout dessin : filtré si la case est cochée, sinon le scan brut. */
+function cleanOf(s) {
+  if (!s || !cleanOn()) return s;
+  const p = cleanParams(), key = p.minPoints + '|' + p.minRange;
+  let c = cleanCache.get(s);
+  if (!c || c.key !== key) { c = { key, scan: filterScan(s, p) }; cleanCache.set(s, c); }
+  c.scan.pose = s.pose;                           // la pose peut changer (glisser-déposer) : on la relit à chaque fois
+  return c.scan;
+}
+const segCache = new WeakMap();                   // scan utilisé (brut ou filtré) -> segments locaux
+function segmentsOf(s) {
+  const c = cleanOf(s);
+  let g = segCache.get(c);
+  if (!g) { g = extractSegments(localPoints(c)); segCache.set(c, g); }
+  return g;
+}
+function ignoredCount(scans) {
+  if (!cleanOn()) return 0;
+  let n = 0; for (const s of scans) n += s.ranges.length - cleanOf(s).ranges.length;
+  return n;
+}
+
 /* ---------- cartes ---------- */
 function scheduleRebuild() {
   if (!$('autoBuild').checked) return;
@@ -1476,17 +1512,19 @@ function rebuild() {
     setStatus('mapStatus', ''); draw(); updateChrome(); updateTimeline(); return;
   }
   const t0 = performance.now();
-  const grid = gridForScans(vis, parseFloat($('gridRes').value), 0.5, { forget: parseFloat($('gridForget').value) || 1 });
-  for (const s of vis) grid.update(s, s.pose);
+  const used = vis.map(cleanOf);                    // scans filtrés (ou bruts si la case est décochée)
+  const grid = gridForScans(used, parseFloat($('gridRes').value), 0.5, { forget: parseFloat($('gridForget').value) || 1 });
+  for (const s of used) grid.update(s, s.pose);
   const vm = new VectorMap({ angTolDeg: +$('angTol').value, distTol: +$('distTol').value, gapTol: +$('gapTol').value });
   for (const s of vis) {
-    if (!s._seg) s._seg = extractSegments(localPoints(s));
-    vm.addSegments(s._seg.map(sg => segToWorld(sg, s.pose)));
+    vm.addSegments(segmentsOf(s).map(sg => segToWorld(sg, s.pose)));
   }
   vm.prune(+$('minWeight').value || 1);
   state.grid = grid; state.vmap = vm;
   renderGridImage();
-  const msg = `${vis.length} scan(s) · grille ${grid.nx}×${grid.ny} · ${vm.segments.length} segments · ${Math.round(performance.now() - t0)} ms`;
+  const ign = ignoredCount(vis);
+  const msg = `${vis.length} scan(s) · grille ${grid.nx}×${grid.ny} · ${vm.segments.length} segments` +
+    (cleanOn() ? ` · ${ign} point${ign > 1 ? 's' : ''} ignoré${ign > 1 ? 's' : ''}` : '') + ` · ${Math.round(performance.now() - t0)} ms`;
   setStatus('mapStatus', msg, 'ok');
   state.mapMsg = msg;
   draw(); updateChrome(); updateTimeline();
@@ -1582,9 +1620,9 @@ function drawSegs(segs, color, lw = 2.5) {
 }
 
 function drawLive() {
-  const v = state.view.live, scan = state.live;
+  const v = state.view.live, scan = cleanOf(state.live);
   if (v.auto) {
-    const maxR = scan ? Math.max(2, Math.min(12, Math.ceil(Math.max(...scan.ranges)))) : 4;
+    const maxR = scan && scan.ranges.length ? Math.max(2, Math.min(12, Math.ceil(Math.max(...scan.ranges)))) : 4;
     v.cx = 0; v.cy = 0; v.s = Math.min(W, H) / 2 / (maxR * 1.08);
   }
   drawRings();
@@ -1607,9 +1645,9 @@ function drawMap() {
   }
   if ($('laySeg').checked && state.vmap) drawSegs(state.vmap.segments, css('--ink'), 1.5);
   if ($('layPts').checked) {                      // les points par-dessus : une couleur par scan, le scan choisi au-dessus
-    state.scans.forEach((s, i) => { if (s.visible && i !== state.selected) drawPoints(worldPoints(s, s.pose), s.color, null, 2.0); });
+    state.scans.forEach((s, i) => { if (s.visible && i !== state.selected) drawPoints(worldPoints(cleanOf(s), s.pose), s.color, null, 2.0); });
     const sel = state.scans[state.selected];
-    if (sel && sel.visible) drawPoints(worldPoints(sel, sel.pose), sel.color, null, 2.3);
+    if (sel && sel.visible) drawPoints(worldPoints(cleanOf(sel), sel.pose), sel.color, null, 2.3);
   }
   ctx.font = '600 12px ' + css('--font');
   state.scans.forEach((s, i) => {
@@ -1683,7 +1721,9 @@ function updateChrome() {
   const hud = $('hud');
   if (state.tab === 'live' && state.live) {
     hud.hidden = false;
-    hud.innerHTML = `<span><b>${state.live.ranges.length}</b>points</span><span><b>${hz.toFixed(1)}</b>scans/s</span><span><b>${fmt(Math.max(...state.live.ranges), 2)}</b>m max</span>`;
+    const shown = cleanOf(state.live), ign = state.live.ranges.length - shown.ranges.length;
+    hud.innerHTML = `<span><b>${shown.ranges.length}</b>points</span>` + (cleanOn() ? `<span><b>${ign}</b>ignorés</span>` : '') +
+      `<span><b>${hz.toFixed(1)}</b>scans/s</span><span><b>${shown.ranges.length ? fmt(Math.max(...shown.ranges), 2) : '–'}</b>m max</span>`;
   } else if (state.tab === 'map' && state.scans.length) {
     const vis = state.scans.filter(s => s.visible).length;
     hud.hidden = false;
@@ -1699,7 +1739,7 @@ function fitView() {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const s of state.scans) {
     if (!s.visible) continue;
-    const p = worldPoints(s, s.pose);
+    const p = worldPoints(cleanOf(s), s.pose);
     for (let i = 0; i < p.length; i += 2) { x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); y0 = Math.min(y0, p[i + 1]); y1 = Math.max(y1, p[i + 1]); }
   }
   if (!isFinite(x0)) { Object.assign(state.view.map, { cx: 3, cy: 2, s: 80 }); draw(); return; }
@@ -1791,7 +1831,7 @@ $('btnGoMap').onclick = () => setTab('map');
 
 /* ---------- import / export ---------- */
 async function importFiles(files) {
-  let added = 0;
+  let added = 0, withPose = 0;
   for (const f of files) {
     const text = await f.text();
     const stem = f.name.replace(/\.[^.]+$/, '');
@@ -1811,6 +1851,7 @@ async function importFiles(files) {
     } else {
       for (const scan of parseScanText(text, stem)) {
         scan.color = nextColor(); scan.visible = true;
+        if (scan.poseFromFile) { flags.posed = true; withPose++; }
         state.scans.push(scan); added++;
       }
     }
@@ -1818,7 +1859,8 @@ async function importFiles(files) {
   state.selected = state.scans.length - 1;
   if (added) flags.exported = false;
   renderScanList(); scheduleRebuild(); draw(); updateChrome(); updateTimeline();
-  toast(added ? `${plural(added, 'scan importé', 'scans importés')}` : 'Aucun scan reconnu dans ces fichiers');
+  toast(!added ? 'Aucun scan reconnu dans ces fichiers'
+    : `${plural(added, 'scan importé', 'scans importés')}` + (withPose ? ` · position retrouvée pour ${withPose}` : ''));
 }
 
 function posesObject() {
@@ -1850,7 +1892,7 @@ async function exportZip() {
   ensureMaps();
   const enc = new TextEncoder(), files = [];
   const add = (name, text) => files.push({ name, data: enc.encode(text) });
-  for (const s of state.scans) add(`scans/${s.name}.csv`, scanToCSV(s));
+  for (const s of state.scans) add(`scans/${s.name}.csv`, scanToCSV(cleanOf(s)));
   add('poses.json', JSON.stringify(posesObject(), null, 2) + '\n');
   add('projet.json', JSON.stringify(projectObject()) + '\n');
   if (state.vmap) add('carte_vectorielle.txt', vectorMapToTxt(state.vmap.segments));
@@ -1881,15 +1923,20 @@ $('btnZip').onclick = exportZip;
 $('btnExpScan').onclick = () => {
   const s = state.tab === 'map' && state.scans[state.selected] ? state.scans[state.selected] : state.live;
   if (!s) { toast('Aucun scan à exporter'); return; }
-  download((s.name === 'live' ? 'scan_live' : s.name) + '.csv', scanToCSV(s), 'text/csv');
+  download((s.name === 'live' ? 'scan_live' : s.name) + '.csv', scanToCSV(cleanOf(s)), 'text/csv');
   markExported('Scan exporté');
 };
 $('btnExpVec').onclick = () => { ensureMaps(); if (state.vmap) { download('carte_vectorielle.txt', vectorMapToTxt(state.vmap.segments)); markExported('Carte vectorielle exportée'); } else toast('Aucun scan à exporter'); };
 $('btnExpGrid').onclick = () => { ensureMaps(); if (state.grid) { download('grille.csv', gridToCSV(state.grid), 'text/csv'); markExported('Grille exportée'); } else toast('Aucun scan à exporter'); };
 $('btnExpPng').onclick = async () => { const b = await canvasPngBlob(); if (b) { download('carte.png', b); markExported('Image exportée'); } };
 ['optLiveSeg', 'optIntensity'].forEach(id => $(id).addEventListener('change', () => {
-  if (id === 'optLiveSeg' && state.live) state.liveSegs = $(id).checked ? extractSegments(localPoints(state.live)) : [];
+  if (id === 'optLiveSeg' && state.live) state.liveSegs = $(id).checked ? segmentsOf(state.live) : [];
   draw();
+}));
+['optClean', 'fMinPts', 'fMinRange'].forEach(id => $(id).addEventListener('change', () => {
+  if (id !== 'optClean') flags.tuned = true;
+  if (state.live) state.liveSegs = $('optLiveSeg').checked ? segmentsOf(state.live) : [];
+  rebuild(); updateChrome();                       // rebuild() redessine aussi
 }));
 ['layPts', 'layGrid', 'laySeg'].forEach(id => $(id).addEventListener('change', draw));
 ['gridRes', 'gridForget', 'angTol', 'distTol', 'gapTol', 'minWeight'].forEach(id => $(id).addEventListener('change', () => { flags.tuned = true; rebuild(); }));
