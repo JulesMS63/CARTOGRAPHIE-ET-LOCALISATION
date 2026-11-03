@@ -199,6 +199,9 @@
   .drive .pad button[data-on=true] { background: var(--blue); border-color: var(--blue); color: #fff; }
   .drive .pad button.stop { color: #b42318; }
   .drive .pad button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .drive .dspeed { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; }
+  .drive .dspeed input { width: 100%; min-width: 80px; margin: 0; }
+  .drive .dspeed output { min-width: 38px; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
   .drive .dstate { text-align: center; min-height: 16px; color: var(--ink); font-weight: 600; }
   .drive .dhint { max-width: 176px; line-height: 1.35; }
   .coords { position: absolute; right: 14px; bottom: 12px; font-size: 12px; color: var(--muted); pointer-events: none; }
@@ -711,7 +714,7 @@
     <canvas id="cv" tabindex="0" aria-label="Vue du lidar"></canvas>
     <div class="hud" id="hud" hidden></div>
     <div class="drive" id="drive" hidden role="group" aria-label="Pilotage du robot">
-      <div class="dh"><b>Pilotage</b><label class="check" title="Active les flèches du clavier, Maj, Q, D et Espace"><input type="checkbox" id="drvKeys"> Clavier</label></div>
+      <div class="dh"><b>Pilotage</b><label class="check" title="Active les flèches du clavier, Maj, Q, D et Espace"><input type="checkbox" id="drvKeys" checked> Clavier</label></div>
       <div class="pad">
         <button type="button" data-v="0,1,0" aria-label="Décaler à gauche" title="Décaler à gauche (Maj + ←  ou  Q)">⇦</button>
         <button type="button" data-v="1,0,0" aria-label="Avancer" title="Avancer (↑)">▲</button>
@@ -723,6 +726,7 @@
         <button type="button" data-v="-1,0,0" aria-label="Reculer" title="Reculer (↓)">▼</button>
         <span></span>
       </div>
+      <label class="dspeed" title="Vitesse des moteurs. Si les roues ne démarrent pas, augmente-la."><span>Vitesse</span><input type="range" id="drvSpeed" min="20" max="100" step="5" value="70" aria-label="Vitesse des moteurs"><output id="drvSpeedVal">70 %</output></label>
       <div class="dstate" id="drvState" aria-live="polite">Arrêt</div>
       <div class="dhint">← → tourner · Maj + ← → décaler · Espace arrêt. Le robot s'arrête seul dès que la commande cesse.</div>
     </div>
@@ -2525,7 +2529,8 @@ function wsMessage(data) {
 
 /* ---------- pilotage du robot par Wi-Fi ----------
    Commandes texte envoyées à l'ESP32 par le même WebSocket que le lidar :
-     D,vx,vy,w   avancer (vx > 0), décaler à gauche (vy > 0), tourner à gauche (w > 0) ; valeurs entre -1 et 1
+     D,vx,vy,w,v avancer (vx > 0), décaler à gauche (vy > 0), tourner à gauche (w > 0) ; valeurs entre -1 et 1 ;
+                 v = vitesse en % (curseur « Vitesse », 20 à 100)
      S           arrêt
    Répétées toutes les 100 ms tant qu'une touche est tenue ; le sketch s'arrête seul si elles cessent. */
 const drive = { keys: new Set(), ignore: new Set(), shift: false, pad: [0, 0, 0], last: 'S' };   // ignore : touches tenues pendant un arrêt, sans effet jusqu'au relâchement
@@ -2542,6 +2547,7 @@ function driveVec() {
   const c = v => Math.max(-1, Math.min(1, v));
   return [c(vx), c(vy), c(w)];
 }
+const driveSpeed = () => Math.max(10, Math.min(100, Math.round(Number($('drvSpeed').value) || 70)));
 function driveLabel(v) {
   const parts = [];
   if (v[0]) parts.push(v[0] > 0 ? 'Avance' : 'Recule');
@@ -2553,7 +2559,7 @@ function driveTick() {
   const show = driveReady() && state.tab === 'live';
   $('drive').hidden = !show;
   const v = show ? driveVec() : [0, 0, 0], moving = v.some(x => x !== 0);
-  const cmd = moving ? `D,${v[0]},${v[1]},${v[2]}` : 'S';
+  const cmd = moving ? `D,${v[0]},${v[1]},${v[2]},${driveSpeed()}` : 'S';
   if (moving || drive.last !== 'S') { if (driveReady()) { try { state.ws.send(cmd); } catch (_) { /* liaison coupée : le robot s'arrête seul */ } } }
   drive.last = cmd;
   $('drvState').textContent = driveLabel(v);
@@ -2587,6 +2593,8 @@ addEventListener('blur', driveStopAll);
 addEventListener('pagehide', driveStopAll);
 document.addEventListener('visibilitychange', () => { if (document.hidden) driveStopAll(); });
 $('drvKeys').addEventListener('change', () => { $('drvKeys').blur(); driveStopAll(); });
+$('drvSpeed').addEventListener('input', () => { $('drvSpeedVal').textContent = driveSpeed() + ' %'; });
+$('drvSpeed').addEventListener('change', () => $('drvSpeed').blur());   // sinon les flèches déplaceraient le curseur
 document.querySelectorAll('#drive .pad button').forEach(b => {
   b.addEventListener('pointerdown', e => {
     e.preventDefault();

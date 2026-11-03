@@ -102,13 +102,14 @@ l'intensité 255 : le filtre d'intensité n'a alors rien à filtrer. Le mot de p
 ### Piloter le robot (v16)
 
 Connecté en Wi-Fi, un **pavé de pilotage** apparaît en bas à droite de la vue Direct : on voit le lidar en direct pendant qu'on conduit.
-Boutons (à tenir appuyés) ou clavier après avoir coché **Clavier** : ↑ ↓ avancer / reculer, ← → tourner, Maj + ← → (ou Q / D) décaler sur le côté,
+Boutons (à tenir appuyés) ou clavier (case **Clavier**, cochée par défaut) : ↑ ↓ avancer / reculer, ← → tourner, Maj + ← → (ou Q / D) décaler sur le côté,
 **Espace** arrêt. Les flèches combinées donnent les diagonales (↑ + Maj + ←, etc.).
 
-Commandes envoyées par le même WebSocket que le lidar : `D,vx,vy,w` (vx > 0 avance, vy > 0 décale à gauche, w > 0 tourne à gauche ; −1, 0 ou 1),
+Commandes envoyées par le même WebSocket que le lidar : `D,vx,vy,w,v` (vx > 0 avance, vy > 0 décale à gauche, w > 0 tourne à gauche ; −1, 0 ou 1 ; v = vitesse en %, curseur **Vitesse**, 20 à 100),
 répétée toutes les 100 ms tant qu'une touche est tenue, et `S` pour arrêter. Un arrêt est aussi envoyé au relâchement, à la perte de focus de la fenêtre,
 au changement d'onglet et à la déconnexion. Le sketch doit en plus s'arrêter seul si les ordres cessent (300 ms dans le sketch fourni).
-La bibliothèque du Mecanum Car ne propose que des mouvements à vitesse fixe : il n'y a donc pas de curseur de vitesse.
+Le curseur **Vitesse** (v18) règle la vitesse des 4 roues : si les petits moteurs ne démarrent pas, il faut l'augmenter. Le sketch fourni commande les 4 roues
+directement (carte moteur en I2C, adresse 0x30) au lieu d'utiliser la bibliothèque `MecanumCar_v2`, écrite pour une Raspberry Pi Pico et limitée à une vitesse fixe de 80/255.
 
 ### Jour 2 : localisation (onglet Localisation de `lidar_web.html`)
 
