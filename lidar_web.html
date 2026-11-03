@@ -165,6 +165,19 @@
   .toolbar .check { white-space: nowrap; }
   .toolbar #btnFit { margin-left: auto; }
   .toolbar .lbl { font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .gstats table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .gstats th { font-weight: 600; color: var(--muted); text-align: right; padding: 2px 0 6px 8px; font-size: 12px; }
+  .gstats th:first-child { text-align: left; padding-left: 0; }
+  .gstats td { padding: 5px 0 5px 8px; text-align: right; border-top: 1px solid var(--hair); font-variant-numeric: tabular-nums; }
+  .gstats td:first-child { text-align: left; padding-left: 0; color: var(--muted); }
+  .gstats td b { color: var(--ink); font-weight: 650; }
+  .cmp { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); width: min(560px, calc(100% - 28px));
+         background: var(--chalk); border: 1px solid var(--hair-strong); border-radius: 12px; padding: 10px 14px; display: grid; gap: 8px; }
+  .cmp[hidden] { display: none; }
+  .cmprow { display: grid; grid-template-columns: 132px 1fr 92px; gap: 12px; align-items: center; font-size: 12.5px; color: var(--muted); }
+  .cmprow .cr { text-align: right; }
+  .cmprow input[type=range] { width: 100%; accent-color: var(--blue); margin: 0; height: 22px; }
+  .cmprow[hidden] { display: none; }
   .vsep { width: 1px; height: 22px; background: var(--hair); }
   .stage { position: relative; flex: 1; min-height: 0; background: var(--canvas); }
   canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
@@ -380,9 +393,27 @@
       </section>
     </li>
 
-    <!-- 5. Export -->
-    <li class="step" data-step="export" data-state="todo" data-line="todo">
+    <!-- 5. Grille 2D -->
+    <li class="step" data-step="grid" data-state="todo" data-line="todo">
       <div class="rail"><span class="node" aria-hidden="true"><span class="num">5</span>
+        <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
+      <section class="card">
+        <h2 class="step-h"><button type="button" class="head" aria-expanded="false" aria-controls="b-grid">
+          <span><span class="t">Grille d'occupation 2D</span><span class="s" data-summary></span></span>
+          <span class="chip" data-chip></span>
+          <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg>
+        </button></h2>
+        <div class="body" id="b-grid"><div class="inner"><div class="pad">
+          <button class="btn primary" id="btnGoGrid" type="button">Ouvrir la grille 2D</button>
+          <div id="gridStats" class="gstats"></div>
+          <p class="hint">Dans l'onglet Grille 2D, deux curseurs sous l'image : le premier fait glisser la séparation entre la grille <b>sans filtre</b> (à gauche) et <b>avec filtre</b> (à droite) ; le second règle la force du filtre (0 = désactivé). Un bon filtre fait disparaître les cellules occupées isolées (le tableau les compte) sans effacer les murs.</p>
+        </div></div></div>
+      </section>
+    </li>
+
+    <!-- 6. Export -->
+    <li class="step" data-step="export" data-state="todo" data-line="todo">
+      <div class="rail"><span class="node" aria-hidden="true"><span class="num">6</span>
         <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
       <section class="card">
         <h2 class="step-h"><button type="button" class="head" aria-expanded="false" aria-controls="b-export">
@@ -410,10 +441,17 @@
     <div class="seg" role="tablist" aria-label="Vue">
       <button role="tab" id="tabLive" aria-selected="true" type="button">Direct</button>
       <button role="tab" id="tabMap" aria-selected="false" type="button">Carte</button>
+      <button role="tab" id="tabGrid" aria-selected="false" type="button">Grille 2D</button>
     </div>
     <div class="opts" id="liveOpts">
       <label class="check"><input type="checkbox" id="optLiveSeg"> Segments</label>
       <label class="check"><input type="checkbox" id="optIntensity" checked> Intensité</label>
+    </div>
+    <div class="opts" id="gridOpts" style="display:none">
+      <span class="lbl">Afficher :</span>
+      <label class="check"><input type="radio" name="gmode" value="cmp" checked> comparaison</label>
+      <label class="check"><input type="radio" name="gmode" value="raw"> sans filtre</label>
+      <label class="check"><input type="radio" name="gmode" value="flt"> avec filtre</label>
     </div>
     <div class="opts" id="mapOpts" style="display:none">
       <label class="check"><input type="checkbox" id="layPts" checked> Points</label>
@@ -433,6 +471,10 @@
     <div class="hud" id="hud" hidden></div>
     <div class="coords" id="footRight"></div>
     <div class="empty" id="empty" hidden></div>
+    <div class="cmp" id="cmpBar" hidden>
+      <div class="cmprow" id="cmpRow"><span class="cl">Sans filtre</span><input type="range" id="cmpSlider" min="0" max="100" value="50" aria-label="Séparation entre la grille sans filtre et avec filtre"><span class="cr">Avec filtre</span></div>
+      <div class="cmprow"><span class="cl" id="fLabel">Filtre : 8 pts min.</span><input type="range" id="fSlide" min="0" max="20" value="8" aria-label="Force du filtre : points minimum par groupe, 0 pour désactiver"><span class="cr" id="fMeter"></span></div>
+    </div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
 </main>
@@ -1079,12 +1121,13 @@ const nextColor = () => scanColor(state.colorIdx++);
 const state = {
   scans: [], selected: -1, live: null, tab: 'live',
   view: { live: { cx: 0, cy: 0, s: 60, auto: true }, map: { cx: 3, cy: 2, s: 80 } },
+  wipe: 0.5, gridStats: null,
   grid: null, vmap: null, gridCanvas: null, queue: 0, counters: {},
   port: null, reader: null, readLoopPromise: null, connected: false, stop: false,
   connState: 'idle', portLabel: '', bytes: 0, gotScan: false, monText: '', monDirty: false, timers: [],
   simTimer: null, scanTimes: [], liveSegs: [], rebuildTimer: null, colorIdx: 0, mapMsg: '', currentStep: undefined,
 };
-const flags = { everConnected: false, mapSeen: false, posed: false, tuned: false, exported: false };
+const flags = { everConnected: false, mapSeen: false, gridSeen: false, posed: false, tuned: false, exported: false };
 const cv = $('cv'), ctx = cv.getContext('2d');
 let W = 0, H = 0, dpr = 1;
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -1111,7 +1154,7 @@ const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
 /* ======================================================================
    CHRONOLOGIE : état de chaque étape, résumés, ouverture automatique
    ====================================================================== */
-const STEPS = ['connect', 'capture', 'place', 'maps', 'export'];
+const STEPS = ['connect', 'capture', 'place', 'maps', 'grid', 'export'];
 const OPTIONAL = new Set(['maps']);
 const stepEl = k => document.querySelector(`.step[data-step="${k}"]`);
 
@@ -1122,6 +1165,7 @@ function stepDone() {
     capture: n > 0,
     place: flags.mapSeen && n > 0 && (flags.posed || n === 1),
     maps: (flags.tuned || flags.exported) && n > 0,
+    grid: flags.gridSeen && n > 0,
     export: flags.exported && n > 0,
   };
 }
@@ -1136,6 +1180,7 @@ function stepSummaries() {
     capture: n ? plural(n, 'scan capturé', 'scans capturés') : 'Le robot reste immobile',
     place: n ? (flags.mapSeen && (flags.posed || n === 1) ? 'Poses réglées sur la carte' : n === 1 ? 'Un seul scan : rien à aligner' : 'Alignez les scans sur la carte') : 'Après la première capture',
     maps: state.vmap ? `${plural(state.vmap.segments.length, 'segment', 'segments')} · grille ${state.grid.nx}×${state.grid.ny}` : 'Valeurs par défaut',
+    grid: flags.gridSeen && state.gridStats ? `${state.gridStats.flt.occ} cellules occupées · ${state.gridStats.flt.iso} isolées` : 'Juger le filtre avec un curseur',
     export: flags.exported ? 'lidar_export.zip enregistré' : 'Fichiers pour le TP',
   };
 }
@@ -1585,14 +1630,12 @@ function rebuild() {
   state.mapMsg = msg;
   draw(); updateChrome(); updateTimeline();
 }
-function renderGridImage() {
-  const g = state.grid;
-  if (!g) { state.gridCanvas = null; return; }
+function gridImage(g, strong = false) {
   const c = document.createElement('canvas'); c.width = g.nx; c.height = g.ny;
   const x = c.getContext('2d'), img = x.createImageData(g.nx, g.ny), cls = g.classify();
   const dark = darkMq.matches;
-  const occ = dark ? [226, 232, 240, 70] : [26, 32, 39, 60];
-  const free = dark ? [148, 163, 184, 38] : [100, 116, 139, 30];
+  const occ = strong ? (dark ? [226, 232, 240, 255] : [26, 32, 39, 255]) : (dark ? [226, 232, 240, 70] : [26, 32, 39, 60]);
+  const free = strong ? (dark ? [148, 163, 184, 70] : [100, 116, 139, 55]) : (dark ? [148, 163, 184, 38] : [100, 116, 139, 30]);
   for (let j = 0; j < g.ny; j++) for (let i = 0; i < g.nx; i++) {
     const v = cls[j * g.nx + i], px = ((g.ny - 1 - j) * g.nx + i) * 4;     // ligne 0 de l'image = y max
     const col = v === 1 ? occ : v === 0 ? free : null;
@@ -1600,9 +1643,65 @@ function renderGridImage() {
     img.data[px] = col[0]; img.data[px + 1] = col[1]; img.data[px + 2] = col[2]; img.data[px + 3] = col[3];
   }
   x.putImageData(img, 0, 0);
-  state.gridCanvas = c;
+  return c;
+}
+function renderGridImage() {
+  state.gridCanvas = state.grid ? gridImage(state.grid) : null;
 }
 darkMq.addEventListener?.('change', () => { renderGridImage(); draw(); });
+
+/* ---------- grille 2D : sans filtre / avec filtre, sur la même étendue pour pouvoir les superposer ---------- */
+let pairCache = { key: '', pair: null };
+function gridKey(vis) {
+  return [$('gridRes').value, $('gridForget').value, cleanOn(), JSON.stringify(cleanParams()), $('optConfirm').checked, $('fConfTol').value, darkMq.matches,
+    vis.map(x => x.name + ':' + x.pose.x.toFixed(4) + ',' + x.pose.y.toFixed(4) + ',' + x.pose.th.toFixed(3) + ':' + x.ranges.length).join(';')].join('|');
+}
+function gridStatsOf(g) {
+  const c = g.classify(), nx = g.nx, ny = g.ny;
+  let occ = 0, iso = 0, free = 0;
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const v = c[j * nx + i];
+    if (v === 0) free++;
+    if (v !== 1) continue;
+    occ++;
+    let nb = false;
+    for (let dj = -1; dj <= 1 && !nb; dj++) for (let di = -1; di <= 1; di++) {
+      if (!di && !dj) continue;
+      const a = i + di, b = j + dj;
+      if (a >= 0 && a < nx && b >= 0 && b < ny && c[b * nx + a] === 1) { nb = true; break; }
+    }
+    if (!nb) iso++;
+  }
+  return { occ, iso, free };
+}
+function gridPair() {
+  const vis = state.scans.filter(s => s.visible);
+  if (!vis.length) { state.gridStats = null; return null; }
+  const key = gridKey(vis);
+  if (pairCache.key === key) return pairCache.pair;
+  const res = parseFloat($('gridRes').value), o = { forget: parseFloat($('gridForget').value) || 1 };
+  const raw = gridForScans(vis, res, 0.5, o);                         // étendue calculée sur les scans bruts : la plus grande
+  for (const s of vis) raw.update(s, s.pose);
+  const flt = new OccupancyGrid(raw.xmin, raw.ymin, raw.xmin + (raw.nx - 0.5) * res, raw.ymin + (raw.ny - 0.5) * res, res, o);
+  for (const s of vis) flt.update(mapScan(s), s.pose);
+  const total = vis.reduce((n, s) => n + s.ranges.length, 0), ign = ignoredCount(vis);
+  const pair = { raw, flt, imgRaw: gridImage(raw, true), imgFlt: gridImage(flt, true),
+                 stats: { raw: gridStatsOf(raw), flt: gridStatsOf(flt), ignored: ign, total } };
+  pairCache = { key, pair };
+  state.gridStats = pair.stats;
+  return pair;
+}
+function renderGridStats() {
+  const box = $('gridStats');
+  const pr = state.tab === 'grid' ? gridPair() : null;
+  const st = pr ? pr.stats : state.gridStats;
+  if (!st) { box.innerHTML = ''; return; }
+  const pct = st.total ? Math.round(100 * st.ignored / st.total) : 0;
+  box.innerHTML = `<table><thead><tr><th></th><th>Sans filtre</th><th>Avec filtre</th></tr></thead><tbody>
+    <tr><td>Cellules occupées</td><td>${st.raw.occ}</td><td><b>${st.flt.occ}</b></td></tr>
+    <tr><td>dont isolées</td><td>${st.raw.iso}</td><td><b>${st.flt.iso}</b></td></tr>
+    <tr><td>Points ignorés</td><td>0</td><td><b>${st.ignored}</b> (${pct} %)</td></tr></tbody></table>`;
+}
 
 /* ---------- dessin ---------- */
 function resize() {
@@ -1615,6 +1714,7 @@ function resize() {
 }
 new ResizeObserver(resize).observe(cv.parentElement);
 
+state.view.grid = state.view.map;                 // la grille partage la vue de la carte (même zoom, même cadrage)
 const V = () => state.view[state.tab];
 const w2s = (x, y) => [W / 2 + (x - V().cx) * V().s, H / 2 - (y - V().cy) * V().s];
 const s2w = (sx, sy) => [V().cx + (sx - W / 2) / V().s, V().cy - (sy - H / 2) / V().s];
@@ -1714,9 +1814,36 @@ function drawMap() {
   });
 }
 
+function drawGrid() {
+  drawGridLines();
+  const pr = gridPair();
+  if (!pr) return;
+  const mode = document.querySelector('input[name=gmode]:checked').value, sc = V().s;
+  const paint = (g, img) => {
+    const [sx, sy] = w2s(g.xmin, g.ymin + g.ny * g.res);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, sx, sy, g.nx * g.res * sc, g.ny * g.res * sc);
+  };
+  ctx.font = '600 12px ' + css('--font');
+  if (mode === 'cmp') {
+    const x0 = Math.round(W * state.wipe);
+    ctx.save(); ctx.beginPath(); ctx.rect(0, 0, x0, H); ctx.clip(); paint(pr.raw, pr.imgRaw); ctx.restore();
+    ctx.save(); ctx.beginPath(); ctx.rect(x0, 0, W - x0, H); ctx.clip(); paint(pr.flt, pr.imgFlt); ctx.restore();
+    ctx.strokeStyle = css('--blue'); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x0 + .5, 0); ctx.lineTo(x0 + .5, H); ctx.stroke();
+    ctx.fillStyle = css('--blue'); ctx.beginPath(); ctx.arc(x0 + .5, H / 2, 7, 0, 2 * Math.PI); ctx.fill();
+    ctx.fillStyle = css('--muted');
+    ctx.textAlign = 'right'; if (x0 > 110) ctx.fillText('Sans filtre', x0 - 10, 70);
+    ctx.textAlign = 'left'; if (W - x0 > 110) ctx.fillText('Avec filtre', x0 + 10, 70);
+    ctx.textAlign = 'left';
+  } else if (mode === 'raw') paint(pr.raw, pr.imgRaw);
+  else paint(pr.flt, pr.imgFlt);
+  state.scans.forEach((s, i) => { if (s.visible) drawRobot(s.pose.x, s.pose.y, s.pose.th, s.color, i === state.selected ? 9 : 7); });
+}
+
 function draw() {
   drawBackground();
-  if (state.tab === 'live') drawLive(); else drawMap();
+  if (state.tab === 'live') drawLive(); else if (state.tab === 'grid') drawGrid(); else drawMap();
 }
 
 /* ---------- pastille de connexion, HUD, écran vide ---------- */
@@ -1741,7 +1868,7 @@ function updateEmpty() {
         <div class="row"><button class="btn primary" type="button" data-act="connect">Connecter le lidar</button>
         <button class="btn" type="button" data-act="sim">Lancer la simulation</button></div>`;
     }
-  } else if (state.tab === 'map' && !state.scans.length) {
+  } else if ((state.tab === 'map' || state.tab === 'grid') && !state.scans.length) {
     key = 'nomap';
     html = `<h2>Aucun scan capturé</h2>
       <p>Capturez un scan depuis l’onglet Direct, ou importez des fichiers déjà enregistrés.</p>
@@ -1780,12 +1907,19 @@ function updateChrome() {
     const shown = cleanOf(state.live), ign = state.live.ranges.length - shown.ranges.length;
     hud.innerHTML = `<span><b>${shown.ranges.length}</b>points</span>` + (cleanOn() ? `<span><b>${ign}</b>ignorés</span>` : '') +
       `<span><b>${hz.toFixed(1)}</b>scans/s</span><span><b>${shown.ranges.length ? fmt(Math.max(...shown.ranges), 2) : '–'}</b>m max</span>`;
+  } else if (state.tab === 'grid' && state.scans.length) {
+    const pr = gridPair();
+    hud.hidden = !pr;
+    if (pr) hud.innerHTML = `<span><b>${pr.stats.flt.occ}</b>cellules occupées</span><span><b>${pr.stats.flt.iso}</b>isolées <small>(${pr.stats.raw.iso} sans filtre)</small></span><span><b>${pr.stats.ignored}</b>points ignorés</span>`;
   } else if (state.tab === 'map' && state.scans.length) {
     const vis = state.scans.filter(s => s.visible).length;
     hud.hidden = false;
     hud.innerHTML = `<span><b>${vis}</b>${vis > 1 ? 'scans' : 'scan'}</span>` +
       (state.vmap ? `<span><b>${state.vmap.segments.length}</b>segments</span><span><b>${state.grid.nx}×${state.grid.ny}</b>cellules</span>` : '');
   } else hud.hidden = true;
+  $('cmpBar').hidden = !(state.tab === 'grid' && state.scans.length);
+  renderGridStats();
+  $('fMeter').textContent = state.tab === 'grid' && state.gridStats && cleanOn() ? `${state.gridStats.ignored} ignorés` : '';
   updateEmpty();
 }
 
@@ -1872,10 +2006,13 @@ function setTab(t) {
   state.tab = t;
   $('tabLive').setAttribute('aria-selected', t === 'live');
   $('tabMap').setAttribute('aria-selected', t === 'map');
+  $('tabGrid').setAttribute('aria-selected', t === 'grid');
   $('liveOpts').style.display = t === 'live' ? 'flex' : 'none';
   $('mapOpts').style.display = t === 'map' ? 'flex' : 'none';
-  if (t === 'map') {
-    if (state.scans.length) flags.mapSeen = true;
+  $('gridOpts').style.display = t === 'grid' ? 'flex' : 'none';
+  $('cmpBar').hidden = !(t === 'grid' && state.scans.length);
+  if (t === 'map' || t === 'grid') {
+    if (state.scans.length) { if (t === 'map') flags.mapSeen = true; else flags.gridSeen = true; }
     if ($('autoBuild').checked) rebuild();
     fitView();
   } else draw();
@@ -1883,6 +2020,8 @@ function setTab(t) {
 }
 $('tabLive').onclick = () => setTab('live');
 $('tabMap').onclick = () => setTab('map');
+$('tabGrid').onclick = () => setTab('grid');
+$('btnGoGrid').onclick = () => setTab('grid');
 $('btnGoMap').onclick = () => setTab('map');
 
 /* ---------- import / export ---------- */
@@ -1971,7 +2110,7 @@ $('fileImport').onchange = e => { importFiles([...e.target.files]); e.target.val
 $('btnClear').onclick = () => {
   if (state.scans.length && !confirm('Effacer tous les scans capturés ?')) return;
   state.scans = []; state.selected = -1; state.counters = {}; state.colorIdx = 0;
-  flags.mapSeen = false; flags.posed = false; flags.tuned = false; flags.exported = false;
+  flags.mapSeen = false; flags.gridSeen = false; flags.posed = false; flags.tuned = false; flags.exported = false;
   setStatus('capStatus', '');
   renderScanList(); rebuild();
 };
@@ -1989,11 +2128,35 @@ $('btnExpPng').onclick = async () => { const b = await canvasPngBlob(); if (b) {
   if (id === 'optLiveSeg' && state.live) state.liveSegs = $(id).checked ? segmentsOf(state.live) : [];
   draw();
 }));
-['optClean', 'fMinPts', 'fMinRange', 'fBreak', 'fConfTol', 'optConfirm'].forEach(id => $(id).addEventListener('change', () => {
-  if (id !== 'optClean') flags.tuned = true;
+function applyFilterChange() {
+  syncFilterUi();
   if (state.live) state.liveSegs = $('optLiveSeg').checked ? segmentsOf(state.live) : [];
   rebuild(); updateChrome();                       // rebuild() redessine aussi
+}
+['optClean', 'fMinPts', 'fMinRange', 'fBreak', 'fConfTol', 'optConfirm'].forEach(id => $(id).addEventListener('change', () => {
+  if (id !== 'optClean') flags.tuned = true;
+  applyFilterChange();
 }));
+
+/* ---------- curseurs de la grille 2D ---------- */
+function syncFilterUi() {                          // le curseur « force du filtre » suit les champs de l'étape 4 et la case
+  const on = cleanOn(), n = cleanParams().minPoints;
+  $('fSlide').value = on ? Math.min(20, n) : 0;
+  $('fLabel').textContent = on ? `Filtre : ${n} pts min.` : 'Filtre désactivé';
+}
+$('fSlide').addEventListener('input', () => {
+  const v = +$('fSlide').value;
+  $('optClean').checked = v > 0;
+  if (v > 0) $('fMinPts').value = v;
+  flags.tuned = true;
+  applyFilterChange();
+});
+$('cmpSlider').addEventListener('input', () => { state.wipe = +$('cmpSlider').value / 100; draw(); });
+document.querySelectorAll('input[name=gmode]').forEach(r => r.addEventListener('change', () => {
+  $('cmpRow').hidden = document.querySelector('input[name=gmode]:checked').value !== 'cmp';
+  draw();
+}));
+syncFilterUi();
 ['layPts', 'layGrid', 'laySeg'].forEach(id => $(id).addEventListener('change', draw));
 ['gridRes', 'gridForget', 'angTol', 'distTol', 'gapTol', 'minWeight'].forEach(id => $(id).addEventListener('change', () => { flags.tuned = true; rebuild(); }));
 document.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('change', () => { cv.style.cursor = r.value === 'scan' ? 'move' : 'grab'; }));
