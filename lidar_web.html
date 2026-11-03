@@ -250,6 +250,9 @@
   .lmtabs button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
   .lmpane { display: grid; gap: 8px; }
   .regbox { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hair); display: grid; gap: 8px; }
+  .robotbox { display: grid; gap: 8px; justify-items: start; padding: 12px; border: 1px solid var(--hair-strong); border-radius: 10px; background: var(--chalk); }
+  .robotbox .hint { margin: 0; }
+  #robotResult:empty { display: none; }
   .regres { display: grid; gap: 6px; font-size: 13px; }
   .regres .alts { display: flex; flex-wrap: wrap; gap: 6px; }
   table.rg { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
@@ -485,7 +488,13 @@
             <button type="button" role="tab" data-pane="vec" aria-selected="false">Vectorielle</button>
             <button type="button" role="tab" data-pane="scan" aria-selected="false">Scan à scan</button>
           </div>
-          <div class="field"><label for="lmScan">Scan à localiser</label><select id="lmScan"></select></div>
+          <div class="robotbox">
+            <button class="btn primary" id="lmRobot" type="button">Scanner avec le robot</button>
+            <div class="hint">Le robot fait un scan, puis sa position est cherchée sur la carte de l'onglet choisi.</div>
+            <div class="status" id="robotStatus" aria-live="polite"></div>
+            <div id="robotResult"></div>
+          </div>
+          <div class="field"><label for="lmScan">Ou un scan déjà capturé</label><select id="lmScan"></select></div>
           <div class="lmpane" id="lmMap">
             <p class="hint" id="lmSrcTxt">Carte faite avec les autres scans.</p>
             <div class="row">
@@ -2541,6 +2550,7 @@ function ingest(rows) {
   const off = parseFloat($('optOffset').value) || 0, mirror = $('optMirror').checked;
   const ang = rows.map(r => (mirror ? -r[0] : r[0]) + off);
   const scan = makeScan('live', ang, rows.map(r => r[1] / 1000), rows.map(r => r[2]));
+  if (state.robotWait) { const give = state.robotWait; state.robotWait = null; give(scan); }   // « Scanner avec le robot » attend ce tour
   const now = performance.now();
   state.scanTimes.push(now);
   while (state.scanTimes.length > 10) state.scanTimes.shift();
@@ -3021,6 +3031,8 @@ const SWEEP_SVG = `<svg viewBox="0 0 96 96" fill="none" stroke="currentColor" st
   <g class="sweep"><path d="M48 48 L48 8 A40 40 0 0 1 76 19.6 Z" fill="var(--beacon)" stroke="none" opacity=".55"/><path d="M48 48 L48 8"/></g>
   <circle cx="48" cy="48" r="3" fill="currentColor" stroke="none"/></svg>`;
 let emptyKey = '';
+/* Localisation ouverte avec une carte importée ou un robot localisé : l'onglet Carte a quelque chose à montrer, même sans scan capturé. */
+const locShowsMap = () => { try { return stepEl('loc').classList.contains('open') && !!(lm.robot || lm.imp.grid || lm.imp.vec); } catch (_) { return false; } };
 function updateEmpty() {
   const box = $('empty');
   let key = '', html = '';
@@ -3038,7 +3050,7 @@ function updateEmpty() {
         <button class="btn primary" type="button" data-act="wifi">Connecter en Wi-Fi</button>
         <button class="btn" type="button" data-act="sim">Lancer la simulation</button></div>`;
     }
-  } else if ((state.tab === 'map' || state.tab === 'grid') && !state.scans.length) {
+  } else if ((state.tab === 'map' || state.tab === 'grid') && !state.scans.length && !(state.tab === 'map' && locShowsMap())) {
     key = 'nomap';
     html = `<h2>Aucun scan capturé</h2>
       <p>Capturez un scan depuis l’onglet Direct, ou importez des fichiers déjà enregistrés.</p>
@@ -3919,9 +3931,10 @@ function lmSyncScans() {
   lmEnable();
 }
 const lmEnable = () => { $('lmGo').disabled = !state.scans.length; };
-$('lmScan').addEventListener('change', () => { const i = +$('lmScan').value; if (state.scans[i]) { state.selected = i; renderScanList(); draw(); } });
+$('lmScan').addEventListener('change', () => { robotClear(); const i = +$('lmScan').value; if (state.scans[i]) { state.selected = i; renderScanList(); draw(); } });
 ['regRef', 'regN', 'lmWhere'].forEach(id => $(id).addEventListener('change', () => draw()));
 function lmSetPane(p) {
+  robotClear();
   lm.pane = p;
   document.querySelectorAll('#lmTabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.pane === p ? 'true' : 'false'));
   $('lmMap').hidden = p === 'scan'; $('lmScanPane').hidden = p !== 'scan';
@@ -4000,6 +4013,7 @@ function lmRef(kind, target) {
   return makeRefFromSegments(vm.segments);
 }
 function lmGo() {
+  robotClear();
   const idx = +$('lmScan').value, scan = state.scans[idx]; if (!scan) { setStatus('lmStatus', 'Choisissez un scan.', 'err'); return; }
   const kind = lm.pane, near = $('lmWhere').value === 'near' ? { x: parseFloat($('lmNx').value) || 0, y: parseFloat($('lmNy').value) || 0, radius: Math.max(0.2, parseFloat($('lmNr').value) || 1.5) } : null;
   $('lmGo').disabled = true; setStatus('lmStatus', 'Recherche…', '');
@@ -4032,6 +4046,67 @@ function lmShow(scan, res) {
   if (state.tab === 'live') setTab('map');
   setStatus('lmStatus', '', '');
 }
+/* ---------- le robot fait un scan, la page renvoie sa position ---------- */
+lm.robot = null;                                                      // { scan, res, pose } : dernier scan du robot et position affichée
+let robotBusy = false;
+function robotClear() {
+  if (!lm.robot && !$('robotResult').innerHTML) return;
+  lm.robot = null; lmCache.key = ''; $('robotResult').innerHTML = ''; setStatus('robotStatus', '', '');
+  draw();
+}
+$('btnReg').addEventListener('click', robotClear);
+function robotRef() {                                                 // carte de l'onglet actif : fichier importé, ou faite avec tous les scans
+  if (lm.pane === 'scan') {
+    const items = state.scans.filter(s => s.visible !== false).map(s => ({ scan: cleanOf(s), pose: { ...s.pose } }));
+    return items.length ? makeRefFromScans(items) : null;
+  }
+  return lmRef(lm.pane, null);
+}
+function robotWaitScan(ms) {                                          // le prochain tour complet reçu du lidar
+  return new Promise(resolve => {
+    const t = setTimeout(() => { state.robotWait = null; resolve(null); }, ms);
+    state.robotWait = scan => { clearTimeout(t); resolve(scan); };
+  });
+}
+async function robotGo() {
+  if (robotBusy) return;
+  const say = (m, c = '') => setStatus('robotStatus', m, c);
+  if (!isLinked() && !state.simTimer) { say('Connectez le lidar (étape 1) ou lancez la simulation.', 'err'); return; }
+  robotClear();
+  let ref;
+  try { ref = robotRef(); } catch (e) { say('Carte impossible : ' + e.message, 'err'); return; }
+  if (!ref) { say('Pas de carte : capturez des scans (étape 2) ou importez un fichier.', 'err'); return; }
+  robotBusy = true; $('lmRobot').disabled = true; say('Le robot scanne…');
+  const got = await robotWaitScan(6000);
+  if (!got) { robotBusy = false; $('lmRobot').disabled = false; say('Aucun scan reçu. Vérifiez la connexion (étape 1).', 'err'); return; }
+  say('Recherche de la position…'); await nextPaint();
+  const scan = { ...got, name: 'robot', color: '#e8590c', pose: { x: 0, y: 0, th: 0 }, visible: false };
+  const near = lm.pane !== 'scan' && $('lmWhere').value === 'near' ? { x: parseFloat($('lmNx').value) || 0, y: parseFloat($('lmNy').value) || 0, radius: Math.max(0.2, parseFloat($('lmNr').value) || 1.5) } : null;
+  let res;
+  try { res = locateOnGrid(ref, cleanOf(scan), near ? { near } : {}); }
+  catch (e) { robotBusy = false; $('lmRobot').disabled = false; say('Échec : ' + e.message, 'err'); return; }
+  robotBusy = false; $('lmRobot').disabled = false; say('');
+  if (res.verdict === 'echec' || !res.pose) {
+    $('robotResult').innerHTML = `<div class="regres"><div><span class="badge ko">Échec</span> Position introuvable.</div><div class="hint">Le robot est peut-être hors de la carte, ou voit trop peu de murs. Essayez « Partout » ou une carte plus complète.</div></div>`;
+    return;
+  }
+  lm.robot = { scan, res }; robotSetPose(res.pose);
+  flags.locRun = true; updateTimeline();
+  if (state.tab === 'live') setTab('map');
+}
+function robotSetPose(p) {                                            // affiche la position choisie ; les autres positions possibles sont cliquables
+  const r = lm.robot, res = r.res;
+  r.scan.pose = { x: Math.round(p.x * 1000) / 1000, y: Math.round(p.y * 1000) / 1000, th: Math.round(p.th * 10) / 10 };
+  const [lab, cls] = REG_LABEL[res.verdict];
+  const alts = res.candidates.filter(c => Math.hypot(c.pose.x - p.x, c.pose.y - p.y) > 0.3 || Math.abs(wrapDeg(c.pose.th - p.th)) > 10).slice(0, 3);
+  const altHtml = res.verdict === 'bonne' || !alts.length ? '' : `<div class="hint">Autres positions possibles :</div><div class="alts">${alts.map((c, k) => `<button class="btn sm" type="button" data-alt="${k}">${esc(regPoseTxt(c.pose))}</button>`).join('')}</div>`;
+  $('robotResult').innerHTML = `<div class="regres"><div><span class="badge ${cls}">${lab}</span></div>
+    <div style="font-size:16px"><b style="white-space:nowrap">x = ${fmt(r.scan.pose.x, 3)} m</b> · <b style="white-space:nowrap">y = ${fmt(r.scan.pose.y, 3)} m</b> · <b style="white-space:nowrap">θ = ${fmt(r.scan.pose.th, 1)}°</b></div>
+    <div class="hint">${Math.round(100 * res.inlierFrac)} % des points sur la carte${res.verdict === 'bonne' ? '' : ' · ' + esc(res.reason || '')}</div>${altHtml}</div>`;
+  $('robotResult').querySelectorAll('[data-alt]').forEach(b => b.onclick = () => robotSetPose(alts[+b.dataset.alt].pose));
+  draw();
+}
+$('lmRobot').onclick = robotGo;
 lmSyncScans(); lmRefreshPane();
 
 
@@ -4039,8 +4114,8 @@ lmSyncScans(); lmRefreshPane();
 const lmCache = { key: '', layer: null };
 function lmLayerFor() {
   const step = document.querySelector('.step[data-step=loc]');
-  if (!step || !step.classList.contains('open') || state.tab !== 'map' || !state.scans.length) return null;
-  const idx = +$('lmScan').value, target = state.scans[idx]; if (!target) return null;
+  if (!step || !step.classList.contains('open') || state.tab !== 'map' || (!state.scans.length && !lm.robot)) return null;
+  const idx = +$('lmScan').value, target = lm.robot ? lm.robot.scan : state.scans[idx]; if (!target) return null;
   const k = lm.pane, imp = lm.imp[k];
   const posKey = state.scans.map(s => s.name + ':' + s.pose.x.toFixed(3) + ',' + s.pose.y.toFixed(3) + ',' + s.pose.th.toFixed(2) + (s.visible === false ? 'h' : '')).join(';');
   const key = [k, target.name, imp ? imp.name + JSON.stringify(k === 'grid' ? lmGridParams() : '') : 'own', k === 'scan' ? $('regRef').value + '/' + $('regN').value : '', cellSize(), darkMq.matches, posKey].join('|');
@@ -4066,16 +4141,17 @@ function lmLayerFor() {
         }
       }
     } else {
-      const choice = $('regRef').value, list = regRefList(idx, choice === 'all' ? 'all' : choice);
-      const refs = list.map(it => state.scans.find(s => cleanOf(s) === it.scan)).filter(Boolean);
-      const label = choice === 'all' ? 'Tous les autres scans' : choice === 'local' ? `Carte locale : ${refs.length} scan(s) précédent(s)` : 'Scan de référence : ' + (refs.map(r => r.name).join(', ') || '–');
+      const choice = lm.robot ? 'all' : $('regRef').value;
+      const refs = lm.robot ? state.scans.filter(s => s.visible !== false)
+        : regRefList(idx, choice === 'all' ? 'all' : choice).map(it => state.scans.find(s => cleanOf(s) === it.scan)).filter(Boolean);
+      const label = choice === 'all' ? (lm.robot ? 'Tous les scans' : 'Tous les autres scans') : choice === 'local' ? `Carte locale : ${refs.length} scan(s) précédent(s)` : 'Scan de référence : ' + (refs.map(r => r.name).join(', ') || '–');
       layer = { kind: 'scan', refs, label };
     }
   } catch (e) { layer = null; }
   lmCache.key = key; lmCache.layer = layer; return layer;
 }
 function drawLocLayer(lay) {
-  const target = state.scans[+$('lmScan').value];
+  const target = lm.robot ? lm.robot.scan : state.scans[+$('lmScan').value];
   if (lay.kind === 'grid') {
     const [sx, sy] = w2s(lay.x0, lay.y0 + lay.h);
     ctx.imageSmoothingEnabled = false; ctx.drawImage(lay.canvas, sx, sy, lay.w * V().s, lay.h * V().s);
@@ -4084,14 +4160,20 @@ function drawLocLayer(lay) {
     state.scans.forEach(s => {
       if (s === target || s.visible === false) return;
       const isRef = lay.refs.includes(s);
-      ctx.globalAlpha = isRef ? 1 : 0.1; drawPoints(worldPoints(mapScan(s), s.pose), s.color, null, isRef ? 2.4 : 1.6); ctx.globalAlpha = 1;
-      if (isRef) { drawRobot(s.pose.x, s.pose.y, s.pose.th, s.color, 8); const [sx, sy] = w2s(s.pose.x, s.pose.y); ctx.font = '600 12px ' + css('--font'); ctx.fillStyle = s.color; ctx.fillText(s.name, sx + 12, sy - 10); }
+      ctx.globalAlpha = isRef ? (lm.robot ? 0.4 : 1) : 0.1; drawPoints(worldPoints(mapScan(s), s.pose), s.color, null, isRef ? 2.4 : 1.6); ctx.globalAlpha = 1;
+      if (isRef && !lm.robot) { drawRobot(s.pose.x, s.pose.y, s.pose.th, s.color, 8); const [sx, sy] = w2s(s.pose.x, s.pose.y); ctx.font = '600 12px ' + css('--font'); ctx.fillStyle = s.color; ctx.fillText(s.name, sx + 12, sy - 10); }
     });
   }
   if (target) {                                                       // le scan à localiser, au-dessus de tout, avec sa position actuelle
     drawPoints(worldPoints(mapScan(target), target.pose), target.color, null, 2.8);
     drawRobot(target.pose.x, target.pose.y, target.pose.th, target.color, 12);
-    const [sx, sy] = w2s(target.pose.x, target.pose.y); ctx.font = '700 12px ' + css('--font'); ctx.fillStyle = target.color; ctx.fillText(target.name, sx + 14, sy - 12);
+    const [sx, sy] = w2s(target.pose.x, target.pose.y); ctx.font = '700 12px ' + css('--font'); ctx.fillStyle = target.color;
+    if (lm.robot) {                                                   // position du robot, lisible sur n'importe quel fond
+      const txt = `Robot  x ${fmt(target.pose.x, 2)} · y ${fmt(target.pose.y, 2)} · θ ${fmt(target.pose.th, 0)}°`, tw = ctx.measureText(txt).width + 14;
+      ctx.fillStyle = css('--canvas'); ctx.globalAlpha = 0.92; ctx.fillRect(sx + 12, sy - 28, tw, 22); ctx.globalAlpha = 1;
+      ctx.strokeStyle = target.color; ctx.lineWidth = 1.5; ctx.strokeRect(sx + 12.5, sy - 27.5, tw, 22);
+      ctx.fillStyle = target.color; ctx.fillText(txt, sx + 19, sy - 12);
+    } else ctx.fillText(target.name, sx + 14, sy - 12);
   }
   ctx.font = '600 12.5px ' + css('--font');                          // bandeau : sur quoi on localise
   const txt = 'Localisation sur : ' + lay.label, tw = ctx.measureText(txt).width + 20;

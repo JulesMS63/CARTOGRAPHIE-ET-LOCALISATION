@@ -67,6 +67,10 @@ terminées passent en bleu avec une coche, les suivantes restent grisées. Chaqu
    - **Scan à scan** : recalage sur le scan précédent, une carte locale de N scans, un scan choisi ou tous les autres (voir ci-dessous).
    - Pendant la localisation, **le fond de la carte change** : grille, segments, ou scans de référence en couleur (les autres effacés), avec le scan à localiser par-dessus et un bandeau « Localisation sur : … ».
    - *Chercher* : **partout** sur la carte, ou près d'une position approximative (plus rapide, lève les ambiguïtés des pièces symétriques).
+   - **Scanner avec le robot** (v15, en haut de l'étape) : le robot fait un scan (le prochain tour reçu en USB, Wi-Fi ou simulation), la page le cherche
+     sur la carte de l'onglet choisi (grille, vectorielle, ou tous les scans) et affiche **x, y, θ** avec un verdict (Fiable / À vérifier / Ambigu).
+     Le robot s'affiche en orange sur la carte. Le scan du robot n'est pas ajouté à la liste des scans. Avec « Près de… » (onglets Grille et Vectorielle),
+     la recherche est plus rapide quand on sait à peu près où il est ; sinon elle couvre toute la carte.
    - *Comparer les méthodes* (replié) : le banc d'essai du Jour 2 (14 méthodes, vérité terrain, essais multiples, courbe de sensibilité ; onglet Localisation).
    - Seuls x, y et θ sont utilisés (pas de hauteur z). En simulation : 0 à 2 cm et moins de 2° sur des scans absents de la carte (≈ 2 s partout, 0,4 s près d'une position).
 7. **Exporter** : `.zip` avec `scans/*.csv`, `poses.json`, `carte_vectorielle.txt`, `grille.csv` (+ `grille.json` : carreau et origine), `carte.png`,
