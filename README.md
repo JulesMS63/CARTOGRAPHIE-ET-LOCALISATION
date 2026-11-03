@@ -60,7 +60,13 @@ terminées passent en bleu avec une coche, les suivantes restent grisées. Chaqu
    Les `scans/*.csv` exportés sont filtrés et commencent par une ligne `# pose: x=… y=… theta=…` : la position suit le fichier et est retrouvée à l'import ; `projet.json` reste brut.
 5. **Grille d'occupation 2D** : onglet **Grille 2D**. La grille sans filtre (à gauche) et avec filtre (à droite) se comparent avec un curseur de séparation ; un second curseur règle la force du filtre ; la taille des carreaux se saisit en millimètres (entier, 10 à 500). Un tableau compte les cellules occupées et celles qui sont isolées.
 6. **Localisation (Jour 2)** : onglet **Localisation**, voir la section ci-dessous.
-7. **Exporter** : `.zip` avec `scans/*.csv`, `poses.json`, `carte_vectorielle.txt`, `grille.csv`, `carte.png`,
+   **Localiser le robot sur une grille importée** (haut de l'étape 6) : *Importer une grille (.csv)* (le `grille.csv` exporté par la page ; pour reprendre
+   l'origine automatiquement, garder le nom `grille_50mm_x-1.63_y-3.90.csv` du bouton « Grille », ou joindre `grille.json` du .zip ; sinon taper le carreau
+   et le coin x₀, y₀), choisir un scan, puis *Localiser le robot* : la page affiche **x, y et θ** du robot dans la grille (sur toute la grille, ou près d'une
+   position approximative), avec un verdict (Fiable / Ambigu…), le recouvrement, et applique la pose au scan (Annuler possible).
+   Fichier : une ligne par rangée, la rangée du haut en premier, `-1` inconnu, `0` libre, `≥ 1` occupé. Seuls x, y et θ sont utilisés (pas de hauteur z).
+   En simulation, des scans absents de la grille sont retrouvés à 1–2 cm et moins de 2° (≈ 2 s sur toute la grille, 0,4 s près d'une position).
+7. **Exporter** : `.zip` avec `scans/*.csv`, `poses.json`, `carte_vectorielle.txt`, `grille.csv` (+ `grille.json` : carreau et origine), `carte.png`,
    `projet.json` (ré-importable dans la page).
 
 Le bouton **Simulation** permet d'essayer la page sans robot.
@@ -108,7 +114,7 @@ mais exigent une pose initiale proche. Sur le banc simulé (bruit 2 cm, 6 % de p
 tombe à 75 % vers 0,5 m / 15° ; le filtre à particules tient encore à 1,2 m / 40°. **Rien de cela n'a été mesuré avec ton lidar** :
 refaire les mesures sur tes scans.
 
-Tests du noyau (Node) : `node tests/web_loc_test.js lidar_web.html` (150 vérifications) et `node tests/web_reg_test.js lidar_web.html` (40 vérifications, recalage automatique et carte locale).
+Tests du noyau (Node) : `node tests/web_loc_test.js lidar_web.html` (150 vérifications) et `node tests/web_reg_test.js lidar_web.html` (40 vérifications, recalage automatique et carte locale) et `node tests/web_grid_test.js lidar_web.html` (17 vérifications, localisation sur une grille importée).
 
 ## Ordre de travail conseillé
 

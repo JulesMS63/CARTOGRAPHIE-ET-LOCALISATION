@@ -243,6 +243,8 @@
   .badge { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid; }
   .badge.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
   .badge.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+  [hidden] { display: none !important; }
+  .gmbox { display: grid; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid var(--hair); }
   .regbox { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hair); display: grid; gap: 8px; }
   .regres { display: grid; gap: 6px; font-size: 13px; }
   .regres .alts { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -486,6 +488,37 @@
           <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg>
         </button></h2>
         <div class="body" id="b-loc"><div class="inner"><div class="pad">
+          <div class="gmbox">
+            <div class="lab">Localiser le robot sur une grille importée</div>
+            <p class="hint">Importez une grille (<code>grille.csv</code> exportée par cette page), puis choisissez un scan : la page retrouve où était le robot dans cette grille (x, y et orientation θ).</p>
+            <div class="row">
+              <button class="btn sm" id="btnGmImport" type="button">Importer une grille (.csv)</button>
+              <button class="btn sm" id="btnGmClear" type="button" hidden>Retirer la grille</button>
+              <input type="file" id="fileGm" accept=".csv,.txt,.json" multiple hidden>
+            </div>
+            <p class="hint" id="gmInfo">Aucune grille importée.</p>
+            <div class="grid3">
+              <div class="field"><label for="gmRes">Carreau (mm)</label><input type="number" id="gmRes" value="50" min="5" max="500" step="1"></div>
+              <div class="field"><label for="gmX0">Coin x₀ (m)</label><input type="number" id="gmX0" value="0" step="0.05"></div>
+              <div class="field"><label for="gmY0">Coin y₀ (m)</label><input type="number" id="gmY0" value="0" step="0.05"></div>
+            </div>
+            <p class="hint">x₀, y₀ : position, dans le repère de la carte, du coin bas-gauche de la grille. Elles sont reprises automatiquement si le nom du fichier les contient (export de cette page) ou si la grille est celle de la carte affichée.</p>
+            <div class="grid2">
+              <div class="field"><label for="gmScan">Scan à localiser</label><select id="gmScan"></select></div>
+              <div class="field"><label for="gmWhere">Où chercher</label><select id="gmWhere"><option value="all">Sur toute la grille</option><option value="near">Près d'une position</option></select></div>
+            </div>
+            <div class="grid3" id="gmNearBox" hidden>
+              <div class="field"><label for="gmNx">x approx. (m)</label><input type="number" id="gmNx" value="0" step="0.1"></div>
+              <div class="field"><label for="gmNy">y approx. (m)</label><input type="number" id="gmNy" value="0" step="0.1"></div>
+              <div class="field"><label for="gmNr">Rayon (m)</label><input type="number" id="gmNr" value="1.5" min="0.2" max="10" step="0.1"></div>
+            </div>
+            <div class="row">
+              <button class="btn primary" id="btnGmLocate" type="button" disabled>Localiser le robot</button>
+              <button class="btn sm" id="btnGmUndo" type="button" hidden>Annuler</button>
+            </div>
+            <div class="status" id="gmStatus" aria-live="polite"></div>
+            <div id="gmResult"></div>
+          </div>
           <button class="btn primary" id="btnGoLoc" type="button">Ouvrir l'onglet Localisation</button>
           <div>
             <div class="lab" style="margin-bottom:6px">Données de test</div>
@@ -1978,6 +2011,58 @@ function trackerStep(tr, scan, hint) {
   it.push({ scan, pose, trusted: good, verdict: res.verdict });
   return { ...res, pose, trusted: good, pass };
 }
+
+/* ---------- grille d'occupation importée (grille.csv) : retrouver la position du robot sur cette grille ---------- */
+/* Le fichier : une ligne par rangée, la rangée du haut en premier ; -1 = inconnu, 0 = libre, ≥ 1 = occupé (format de grille.csv exporté par la page). */
+function parseGridCsv(text) {
+  const rows = []; let skipped = 0;
+  for (const raw of String(text).split(/\r?\n/)) {
+    const l = raw.trim(); if (!l || l[0] === '#') continue;
+    const f = l.split(/[,;\s]+/).filter(t => t !== '').map(Number);
+    if (!f.length || f.some(v => !Number.isFinite(v))) { skipped++; continue; }      // ligne d'en-tête ou texte : ignorée
+    rows.push(f);
+  }
+  if (rows.length < 3) throw new Error('le fichier ne contient pas de grille (il faut au moins 3 lignes de nombres)');
+  const nx = rows[0].length, ny = rows.length;
+  if (nx < 3 || rows.some(r => r.length !== nx)) throw new Error('les lignes de la grille n’ont pas toutes la même longueur');
+  const cls = new Int8Array(nx * ny);
+  for (let r = 0; r < ny; r++) for (let i = 0; i < nx; i++) { const v = rows[r][i]; cls[(ny - 1 - r) * nx + i] = v < 0 ? -1 : v >= 1 ? 1 : 0; }
+  let occ = 0, free = 0; for (const v of cls) { if (v === 1) occ++; else if (v === 0) free++; }
+  return { nx, ny, cls, occ, free, skipped };
+}
+/* g : {nx, ny, cls}, res (m par carreau), (x0, y0) : coin bas-gauche de la grille dans le repère de la carte. */
+function makeRefFromGrid(g, res, x0, y0) {
+  const { nx, ny, cls } = g, Pa = [], cell = [];
+  const occ = (i, j) => i >= 0 && j >= 0 && i < nx && j < ny && cls[j * nx + i] === 1;
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) if (cls[j * nx + i] === 1) { Pa.push(x0 + (i + 0.5) * res, y0 + (j + 0.5) * res); cell.push(i, j); }
+  if (Pa.length < 40) return null;
+  const P = Float64Array.from(Pa), N = new Float64Array(P.length).fill(NaN), R = 3;
+  for (let k = 0; k < P.length / 2; k++) {                               // normale du mur : perpendiculaire à l'axe principal des cases occupées voisines
+    const ci = cell[2 * k], cj = cell[2 * k + 1]; let n = 0, sxx = 0, sxy = 0, syy = 0;
+    for (let dj = -R; dj <= R; dj++) for (let di = -R; di <= R; di++) if (occ(ci + di, cj + dj)) { n++; sxx += di * di; sxy += di * dj; syy += dj * dj; }
+    if (n < 5) continue;
+    const a = 0.5 * Math.atan2(2 * sxy, sxx - syy) + Math.PI / 2; N[2 * k] = Math.cos(a); N[2 * k + 1] = Math.sin(a);
+  }
+  const mask = new Uint8Array(nx * ny); for (let i = 0; i < mask.length; i++) mask[i] = cls[i] === 1 ? 1 : 0;
+  const d = distanceTransform(mask, nx, ny, res);
+  if (!d) return null;
+  return { P, N, items: [], index: new PointIndex(P), field: new DistField(x0, y0, nx, ny, res, d), n: 1, poses: [], fromGrid: true };
+}
+/* Position du robot sur la grille. o : { near:{x,y,radius}, ... } (sans « near » : toute la grille, tous les angles) */
+function locateOnGrid(ref, scan, o = {}) {
+  const f = ref.field, W = f.nx * f.res, H = f.ny * f.res;
+  const wide = !o.near, cx = wide ? f.xmin + W / 2 : o.near.x, cy = wide ? f.ymin + H / 2 : o.near.y;
+  const radius = wide ? Math.min(12, Math.max(1, 0.5 * Math.hypot(W, H))) : (o.near.radius ?? 1.5);
+  return registerScan(ref, scan, { center: { x: cx, y: cy, th: 0 }, radius, thRange: 180, limits: { ambig: 0.85, altInl: 0.8 }, candidates: o.candidates ?? 12, stepXY: o.stepXY });
+}
+
+/* Origine et taille d'une grille : écrites dans le nom du fichier (grille_50mm_x-1.63_y-3.90.csv) et dans grille.json de l'export .zip, pour la réimporter au bon endroit. */
+function gridMeta(g) { return { res_m: g.res, x0: +g.xmin.toFixed(4), y0: +g.ymin.toFixed(4), nx: g.nx, ny: g.ny }; }
+function gridFileName(g) { return `grille_${Math.round(g.res * 1000)}mm_x${g.xmin.toFixed(2)}_y${g.ymin.toFixed(2)}.csv`; }
+function metaFromGridName(name) {
+  const m = String(name).match(/_(\d+(?:\.\d+)?)mm_x(-?\d+(?:\.\d+)?)_y(-?\d+(?:\.\d+)?)/i);
+  return m ? { res_m: +m[1] / 1000, x0: +m[2], y0: +m[3] } : null;
+}
 /* CORE-END */
 
 /* ======================================================================
@@ -1993,7 +2078,7 @@ const state = {
   scans: [], selected: -1, live: null, tab: 'live',
   view: { live: { cx: 0, cy: 0, s: 60, auto: true }, map: { cx: 3, cy: 2, s: 80 } },
   wipe: 0.5, gridStats: null,
-  grid: null, vmap: null, gridCanvas: null, queue: 0, counters: {},
+  grid: null, vmap: null, gridCanvas: null, refGrid: null, queue: 0, counters: {},
   port: null, reader: null, readLoopPromise: null, connected: false, stop: false,
   connState: 'idle', portLabel: '', bytes: 0, gotScan: false, monText: '', monDirty: false, timers: [],
   simTimer: null, scanTimes: [], liveSegs: [], rebuildTimer: null, colorIdx: 0, mapMsg: '', currentStep: undefined,
@@ -2384,7 +2469,7 @@ function renderScanList() {
   box.innerHTML = '';
   if (!state.scans.length) {
     box.innerHTML = '<div class="empty-list">Aucun scan pour l’instant.</div>';
-    if (typeof locRefreshSelects === 'function') { locRefreshSelects(); regRefreshSelects(); }
+    if (typeof locRefreshSelects === 'function') { locRefreshSelects(); regRefreshSelects(); gmRefreshScans(); }
     return;
   }
   state.scans.forEach((s, i) => {
@@ -2414,7 +2499,7 @@ function renderScanList() {
     });
     box.appendChild(el);
   });
-  if (typeof locRefreshSelects === 'function') { locRefreshSelects(); regRefreshSelects(); }
+  if (typeof locRefreshSelects === 'function') { locRefreshSelects(); regRefreshSelects(); gmRefreshScans(); }
 }
 function touchPose() { if (!flags.posed) { flags.posed = true; updateTimeline(); } }
 function refreshPoseInputs() {
@@ -2685,6 +2770,12 @@ function drawLive() {
 
 function drawMap() {
   drawGridLines();
+  const rg = state.refGrid;                         // grille importée (localisation sur une grille)
+  if (rg && $('layGrid').checked) {
+    const [sx, sy] = w2s(rg.x0, rg.y0 + rg.g.ny * rg.res);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(rg.canvas, sx, sy, rg.g.nx * rg.res * V().s, rg.g.ny * rg.res * V().s);
+  }
   const g = state.grid;
   if (g && state.gridCanvas && $('layGrid').checked) {
     const [sx, sy] = w2s(g.xmin, g.ymin + g.ny * g.res);
@@ -2827,6 +2918,7 @@ function fitView() {
     const p = worldPoints(mapScan(s), s.pose);
     for (let i = 0; i < p.length; i += 2) { x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); y0 = Math.min(y0, p[i + 1]); y1 = Math.max(y1, p[i + 1]); }
   }
+  if (state.refGrid) { const r = state.refGrid; x0 = Math.min(x0, r.x0); y0 = Math.min(y0, r.y0); x1 = Math.max(x1, r.x0 + r.g.nx * r.res); y1 = Math.max(y1, r.y0 + r.g.ny * r.res); }
   if (!isFinite(x0)) { Object.assign(state.view.map, { cx: 3, cy: 2, s: 80 }); draw(); return; }
   const v = state.view.map;
   v.cx = (x0 + x1) / 2; v.cy = (y0 + y1) / 2;
@@ -2993,7 +3085,7 @@ async function exportZip() {
   add('poses.json', JSON.stringify(posesObject(), null, 2) + '\n');
   add('projet.json', JSON.stringify(projectObject()) + '\n');
   if (state.vmap) add('carte_vectorielle.txt', vectorMapToTxt(state.vmap.segments));
-  if (state.grid) add('grille.csv', gridToCSV(state.grid));
+  if (state.grid) { add('grille.csv', gridToCSV(state.grid)); add('grille.json', JSON.stringify(gridMeta(state.grid)) + '\n'); }
   if (loc.log.length) add('localisation_resultats.csv', locCsv());
   const png = await canvasPngBlob();
   if (png) files.push({ name: 'carte.png', data: new Uint8Array(await png.arrayBuffer()) });
@@ -3025,7 +3117,7 @@ $('btnExpScan').onclick = () => {
   markExported('Scan exporté');
 };
 $('btnExpVec').onclick = () => { ensureMaps(); if (state.vmap) { download('carte_vectorielle.txt', vectorMapToTxt(state.vmap.segments)); markExported('Carte vectorielle exportée'); } else toast('Aucun scan à exporter'); };
-$('btnExpGrid').onclick = () => { ensureMaps(); if (state.grid) { download('grille.csv', gridToCSV(state.grid), 'text/csv'); markExported('Grille exportée'); } else toast('Aucun scan à exporter'); };
+$('btnExpGrid').onclick = () => { ensureMaps(); if (state.grid) { download(gridFileName(state.grid), gridToCSV(state.grid), 'text/csv'); markExported('Grille exportée'); } else toast('Aucun scan à exporter'); };
 $('btnExpPng').onclick = async () => { const b = await canvasPngBlob(); if (b) { download('carte.png', b); markExported('Image exportée'); } };
 ['optLiveSeg', 'optIntensity'].forEach(id => $(id).addEventListener('change', () => {
   if (id === 'optLiveSeg' && state.live) state.liveSegs = $(id).checked ? segmentsOf(state.live) : [];
@@ -3624,6 +3716,94 @@ function regAfterCapture() {
   setTimeout(() => regRun(state.scans.length - 1, { auto: true }), 60);
 }
 regRefreshSelects();
+
+
+/* ================= Localiser le robot sur une grille importée ================= */
+const gm = { undoable: false };
+function gmRefreshScans() {
+  const sel = $('gmScan'), cur = sel.value;
+  sel.innerHTML = state.scans.map((s, i) => `<option value="${i}">${esc(s.name)}</option>`).join('') || '<option value="">(aucun scan)</option>';
+  const keep = [...sel.options].some(o => o.value === cur) ? cur : String(state.selected >= 0 ? state.selected : Math.max(0, state.scans.length - 1));
+  if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
+  $('btnGmLocate').disabled = !state.refGrid || !state.scans.length;
+}
+$('gmWhere').addEventListener('change', () => { $('gmNearBox').hidden = $('gmWhere').value !== 'near'; });
+$('btnGmImport').onclick = () => $('fileGm').click();
+$('fileGm').onchange = async e => { const files = [...e.target.files]; e.target.value = ''; await gmImport(files); };
+async function gmImport(files) {
+  const csv = files.find(f => /\.(csv|txt)$/i.test(f.name)), js = files.find(f => /\.json$/i.test(f.name));
+  if (!csv) { setStatus('gmStatus', 'Choisissez un fichier .csv (la grille).', 'err'); return; }
+  let g; try { g = parseGridCsv(await csv.text()); } catch (err) { setStatus('gmStatus', 'Grille illisible : ' + err.message + '.', 'err'); return; }
+  let meta = metaFromGridName(csv.name), src = meta ? 'nom du fichier' : '';
+  if (js) { try { const m = JSON.parse(await js.text()); if (m && isFinite(m.res_m) && isFinite(m.x0) && isFinite(m.y0)) { meta = m; src = js.name; } } catch (_) { /* ignoré */ } }
+  if (!meta && state.grid && state.grid.nx === g.nx && state.grid.ny === g.ny) { meta = { res_m: state.grid.res, x0: state.grid.xmin, y0: state.grid.ymin }; src = 'la carte affichée (mêmes dimensions)'; }
+  if (meta) { $('gmRes').value = Math.round(meta.res_m * 1000); $('gmX0').value = +meta.x0.toFixed(3); $('gmY0').value = +meta.y0.toFixed(3); }
+  gm.g = g; gm.name = csv.name; gm.fromMeta = src;
+  gmBuild();
+  $('btnGmClear').hidden = false;
+  if (state.tab === 'live') setTab('map');
+  fitView();
+}
+function gmParams() {
+  const num = (id, d, lo, hi) => { const v = parseFloat($(id).value); return isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
+  return { res: num('gmRes', 50, 5, 500) / 1000, x0: num('gmX0', 0, -1e4, 1e4), y0: num('gmY0', 0, -1e4, 1e4) };
+}
+function gmBuild() {                                               // (re)construit la référence quand la grille ou ses réglages changent
+  if (!gm.g) return;
+  const P = gmParams(), ref = makeRefFromGrid(gm.g, P.res, P.x0, P.y0);
+  if (!ref) { state.refGrid = null; setStatus('gmStatus', 'Cette grille contient trop peu de cases occupées (murs) pour localiser un scan.', 'err'); gmInfo(); draw(); return; }
+  const pseudo = { nx: gm.g.nx, ny: gm.g.ny, classify: () => gm.g.cls };
+  gm.ref = ref; state.refGrid = { g: gm.g, res: P.res, x0: P.x0, y0: P.y0, canvas: gridImage(pseudo, true) };
+  gmInfo(); gmRefreshScans(); draw();
+  setStatus('gmStatus', 'Grille prête. Choisissez un scan puis « Localiser le robot ».', 'ok');
+}
+function gmInfo() {
+  const g = gm.g; if (!g) { $('gmInfo').textContent = 'Aucune grille importée.'; return; }
+  const P = gmParams();
+  $('gmInfo').textContent = `${gm.name} : ${g.nx} × ${g.ny} carreaux de ${Math.round(P.res * 1000)} mm (${fmt(g.nx * P.res, 1)} × ${fmt(g.ny * P.res, 1)} m), ${g.occ} occupés.` + (gm.fromMeta ? ` Origine reprise de : ${gm.fromMeta}.` : ' Origine non trouvée : vérifiez le carreau et le coin x₀, y₀.');
+}
+['gmRes', 'gmX0', 'gmY0'].forEach(id => $(id).addEventListener('change', () => { gm.fromMeta = ''; gmBuild(); }));
+$('btnGmClear').onclick = () => { gm.g = gm.ref = null; state.refGrid = null; $('btnGmClear').hidden = true; gmInfo(); gmRefreshScans(); setStatus('gmStatus', 'Grille retirée.', ''); $('gmResult').innerHTML = ''; draw(); };
+$('btnGmUndo').onclick = () => { $('btnRegUndo').click(); $('btnGmUndo').hidden = true; $('gmResult').innerHTML = ''; setStatus('gmStatus', 'Position précédente rétablie.', 'ok'); };
+
+function gmLocate() {
+  if (!gm.ref) { setStatus('gmStatus', 'Importez d’abord une grille.', 'err'); return; }
+  const idx = +$('gmScan').value, scan = state.scans[idx]; if (!scan) { setStatus('gmStatus', 'Choisissez un scan à localiser.', 'err'); return; }
+  const near = $('gmWhere').value === 'near' ? { x: parseFloat($('gmNx').value) || 0, y: parseFloat($('gmNy').value) || 0, radius: Math.max(0.2, parseFloat($('gmNr').value) || 1.5) } : null;
+  $('btnGmLocate').disabled = true; setStatus('gmStatus', `Recherche de la position de ${scan.name} sur la grille…`, '');
+  setTimeout(() => {
+    let res;
+    try { res = locateOnGrid(gm.ref, cleanOf(scan), near ? { near } : {}); } catch (e) { setStatus('gmStatus', 'La localisation a échoué : ' + e.message, 'err'); gmRefreshScans(); return; }
+    gmRefreshScans();
+    state.selected = idx; renderScanList();
+    gmShow(scan, res);
+  }, 40);
+}
+$('btnGmLocate').onclick = gmLocate;
+function gmShow(scan, res) {
+  const [lab, cls] = REG_LABEL[res.verdict];
+  if (res.verdict === 'echec' || !res.pose) {
+    $('gmResult').innerHTML = `<div class="regres"><div><span class="badge ko">Échec</span> ${esc(res.reason || 'aucune position trouvée')}. La position de ${esc(scan.name)} n’a pas été modifiée.</div>
+      <div class="hint">Vérifiez le carreau et le coin x₀, y₀ de la grille, ou que le scan a été pris dans la zone cartographiée.</div></div>`;
+    setStatus('gmStatus', `${scan.name} : aucune position trouvée.`, 'err'); return;
+  }
+  regApply([{ scan, pose: res.pose }]);
+  $('btnGmUndo').hidden = false;
+  const alts = res.candidates.slice(1).filter(c => Math.hypot(c.pose.x - res.pose.x, c.pose.y - res.pose.y) > 0.3 || Math.abs(wrapDeg(c.pose.th - res.pose.th)) > 10).slice(0, 3);
+  const altHtml = res.verdict === 'bonne' || !alts.length ? '' :
+    `<div class="hint">Autres positions possibles (cliquez pour essayer) :</div><div class="alts">${alts.map((c, k) => `<button class="btn sm" type="button" data-alt="${k}">${esc(regPoseTxt(c.pose))} · ${Math.round(100 * c.inlierFrac)} %</button>`).join('')}</div>`;
+  $('gmResult').innerHTML = `<div class="regres"><div><span class="badge ${cls}">${lab}</span> <b>${esc(scan.name)}</b></div>
+    <div style="font-size:15px;margin:4px 0"><b>x = ${fmt(res.pose.x, 3)} m</b> · <b>y = ${fmt(res.pose.y, 3)} m</b> · θ = ${fmt(res.pose.th, 1)}°</div>
+    <div class="hint">${Math.round(100 * res.inlierFrac)} % des points du scan tombent sur un mur de la grille (à 5 cm)${isFinite(res.rms) ? ` · écart moyen ${fmt(res.rms * 100, 1)} cm` : ''} · ${fmt(res.ms / 1000, 1)} s${res.reason ? ` · ${esc(res.reason)}` : ''}</div>${altHtml}
+    ${res.verdict === 'bonne' ? '' : '<div class="hint">Pour lever le doute, choisissez « Près d’une position » et tapez où se trouvait approximativement le robot.</div>'}</div>`;
+  $('gmResult').querySelectorAll('[data-alt]').forEach(b => b.onclick = () => {
+    const c = alts[+b.dataset.alt], prev = reg.undo; regApply([{ scan, pose: c.pose }]); reg.undo = prev || reg.undo;
+    $('btnRegUndo').hidden = false; $('btnGmUndo').hidden = false; setStatus('gmStatus', `${scan.name} : autre position appliquée.`, 'ok');
+  });
+  if (state.tab === 'live') setTab('map');
+  setStatus('gmStatus', res.verdict === 'bonne' ? `${scan.name} localisé : x ${fmt(res.pose.x, 2)} m, y ${fmt(res.pose.y, 2)} m.` : `${scan.name} placé, à vérifier : ${res.reason}.`, res.verdict === 'bonne' ? 'ok' : 'warn');
+}
+gmRefreshScans();
 
 
 if (hasSerial()) {
