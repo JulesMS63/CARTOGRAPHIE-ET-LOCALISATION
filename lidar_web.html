@@ -178,6 +178,8 @@
   .cmprow .cr { text-align: right; }
   .cmprow input[type=range] { width: 100%; accent-color: var(--blue); margin: 0; height: 22px; }
   .cmprow[hidden] { display: none; }
+  .toolbar .inl { font-size: 13px; color: var(--muted); white-space: nowrap; }
+  #gridRes2 { width: 70px; padding: 6px 8px; }
   .vsep { width: 1px; height: 22px; background: var(--hair); }
   .stage { position: relative; flex: 1; min-height: 0; background: var(--canvas); }
   canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
@@ -371,8 +373,8 @@
         </button></h2>
         <div class="body" id="b-maps"><div class="inner"><div class="pad">
           <div class="grid2">
-            <div class="field"><label for="gridRes">Cellule de la grille (m)</label>
-              <select id="gridRes"><option>0.03</option><option selected>0.05</option><option>0.10</option></select></div>
+            <div class="field"><label for="gridRes">Carreaux de la grille (mm)</label>
+              <input type="number" id="gridRes" value="50" step="1" min="10" max="500" inputmode="numeric"></div>
             <div class="field"><label for="gridForget">Oubli par scan</label><input type="number" id="gridForget" value="1" min="0.5" max="1" step="0.01"></div>
             <div class="field"><label for="angTol">Écart d'angle (°)</label><input type="number" id="angTol" value="10" step="1"></div>
             <div class="field"><label for="distTol">Écart latéral (m)</label><input type="number" id="distTol" value="0.06" step="0.01"></div>
@@ -448,10 +450,12 @@
       <label class="check"><input type="checkbox" id="optIntensity" checked> Intensité</label>
     </div>
     <div class="opts" id="gridOpts" style="display:none">
-      <span class="lbl">Afficher :</span>
-      <label class="check"><input type="radio" name="gmode" value="cmp" checked> comparaison</label>
-      <label class="check"><input type="radio" name="gmode" value="raw"> sans filtre</label>
-      <label class="check"><input type="radio" name="gmode" value="flt"> avec filtre</label>
+      <label class="check"><input type="radio" name="gmode" value="cmp" checked> Comparer</label>
+      <label class="check"><input type="radio" name="gmode" value="raw"> Sans filtre</label>
+      <label class="check"><input type="radio" name="gmode" value="flt"> Avec filtre</label>
+      <span class="vsep"></span>
+      <label class="inl" for="gridRes2">Carreaux (mm)</label>
+      <input type="number" id="gridRes2" value="50" step="1" min="10" max="500" inputmode="numeric" title="Taille d'un carreau de la grille en millimètres (entier de 10 à 500). Entrée ou clic ailleurs pour appliquer.">
     </div>
     <div class="opts" id="mapOpts" style="display:none">
       <label class="check"><input type="checkbox" id="layPts" checked> Points</label>
@@ -464,7 +468,7 @@
     </div>
     <span class="vsep"></span>
     <label class="check" title="Retire les points seuls ou en tout petit groupe, et ceux collés au capteur"><input type="checkbox" id="optClean" checked> Ignorer les points isolés</label>
-    <button class="btn sm" id="btnFit" type="button">Ajuster la vue</button>
+    <button class="btn sm" id="btnFit" type="button" title="Ajuster la vue au contenu" aria-label="Ajuster la vue au contenu">Ajuster</button>
   </div>
   <div class="stage">
     <canvas id="cv" tabindex="0" aria-label="Vue du lidar"></canvas>
@@ -1600,6 +1604,25 @@ function ignoredCount(scans) {
   return n;
 }
 
+/* ---------- taille des carreaux : un entier en millimètres, le même partout (étape 4 et onglet Grille 2D) ---------- */
+const MAX_CELLS = 4e6;
+function cellMm() {
+  const v = Math.round(+$('gridRes').value);
+  return isFinite(v) && v > 0 ? Math.min(500, Math.max(10, v)) : 50;
+}
+const cellSize = () => cellMm() / 1000;
+function setCellField(mm) { $('gridRes').value = mm; $('gridRes2').value = mm; }
+function gridCapped(scans, o) {                  // évite une grille de plusieurs millions de cellules (carreaux très fins sur une grande zone)
+  let g = gridForScans(scans, cellSize(), 0.5, o);
+  if (g && g.nx * g.ny > MAX_CELLS) {
+    const mm = Math.min(500, Math.ceil(cellMm() * Math.sqrt(g.nx * g.ny / MAX_CELLS)));
+    setCellField(mm);
+    g = gridForScans(scans, mm / 1000, 0.5, o);
+    toast(`Zone très étendue : carreaux portés à ${mm} mm pour garder une grille calculable`);
+  }
+  return g;
+}
+
 /* ---------- cartes ---------- */
 function scheduleRebuild() {
   if (!$('autoBuild').checked) return;
@@ -1614,7 +1637,7 @@ function rebuild() {
   }
   const t0 = performance.now();
   const used = vis.map(mapScan);                    // scans filtrés (ou bruts si la case est décochée)
-  const grid = gridForScans(used, parseFloat($('gridRes').value), 0.5, { forget: parseFloat($('gridForget').value) || 1 });
+  const grid = gridCapped(used, { forget: parseFloat($('gridForget').value) || 1 });
   for (const s of used) grid.update(s, s.pose);
   const vm = new VectorMap({ angTolDeg: +$('angTol').value, distTol: +$('distTol').value, gapTol: +$('gapTol').value });
   for (const s of vis) {
@@ -1653,7 +1676,7 @@ darkMq.addEventListener?.('change', () => { renderGridImage(); draw(); });
 /* ---------- grille 2D : sans filtre / avec filtre, sur la même étendue pour pouvoir les superposer ---------- */
 let pairCache = { key: '', pair: null };
 function gridKey(vis) {
-  return [$('gridRes').value, $('gridForget').value, cleanOn(), JSON.stringify(cleanParams()), $('optConfirm').checked, $('fConfTol').value, darkMq.matches,
+  return [cellMm(), $('gridForget').value, cleanOn(), JSON.stringify(cleanParams()), $('optConfirm').checked, $('fConfTol').value, darkMq.matches,
     vis.map(x => x.name + ':' + x.pose.x.toFixed(4) + ',' + x.pose.y.toFixed(4) + ',' + x.pose.th.toFixed(3) + ':' + x.ranges.length).join(';')].join('|');
 }
 function gridStatsOf(g) {
@@ -1679,8 +1702,9 @@ function gridPair() {
   if (!vis.length) { state.gridStats = null; return null; }
   const key = gridKey(vis);
   if (pairCache.key === key) return pairCache.pair;
-  const res = parseFloat($('gridRes').value), o = { forget: parseFloat($('gridForget').value) || 1 };
-  const raw = gridForScans(vis, res, 0.5, o);                         // étendue calculée sur les scans bruts : la plus grande
+  const o = { forget: parseFloat($('gridForget').value) || 1 };
+  const raw = gridCapped(vis, o);
+  const res = raw.res;                         // étendue calculée sur les scans bruts : la plus grande
   for (const s of vis) raw.update(s, s.pose);
   const flt = new OccupancyGrid(raw.xmin, raw.ymin, raw.xmin + (raw.nx - 0.5) * res, raw.ymin + (raw.ny - 0.5) * res, res, o);
   for (const s of vis) flt.update(mapScan(s), s.pose);
@@ -2158,7 +2182,13 @@ document.querySelectorAll('input[name=gmode]').forEach(r => r.addEventListener('
 }));
 syncFilterUi();
 ['layPts', 'layGrid', 'laySeg'].forEach(id => $(id).addEventListener('change', draw));
-['gridRes', 'gridForget', 'angTol', 'distTol', 'gapTol', 'minWeight'].forEach(id => $(id).addEventListener('change', () => { flags.tuned = true; rebuild(); }));
+['gridForget', 'angTol', 'distTol', 'gapTol', 'minWeight'].forEach(id => $(id).addEventListener('change', () => { flags.tuned = true; rebuild(); }));
+['gridRes', 'gridRes2'].forEach(id => $(id).addEventListener('change', () => {   // entier en mm, borné à 10–500
+  const raw = +$(id).value, mm = isFinite(raw) && $(id).value !== '' ? Math.min(500, Math.max(10, Math.round(raw))) : cellMm();
+  setCellField(mm);
+  flags.tuned = true; rebuild();
+}));
+['gridRes', 'gridRes2'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === '.' || e.key === ',' || e.key === 'e') e.preventDefault(); }));   // pas de décimale
 document.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('change', () => { cv.style.cursor = r.value === 'scan' ? 'move' : 'grab'; }));
 $('autoBuild').addEventListener('change', () => { if ($('autoBuild').checked) rebuild(); });
 
