@@ -400,9 +400,10 @@
           <p class="hint">Dans l'onglet Carte, cochez « Glisser : le scan choisi », puis faites glisser (Maj pour tourner). Flèches, <code>,</code> et <code>.</code> affinent la pose.</p>
           <div class="regbox">
             <div class="lab">Retrouver la position automatiquement</div>
-            <p class="hint">La page recale le scan choisi dans la liste sur le scan précédent (ou un autre scan au choix) : pas besoin de mesurer sa position. C'est la méthode adaptée à un robot qui scanne en avançant : chaque scan est placé par rapport au précédent.</p>
+            <p class="hint">La page recale le scan choisi dans la liste sur le scan précédent (par défaut), sur un scan au choix, ou sur la carte des N derniers scans : pas besoin de mesurer sa position. Le scan précédent est le plus simple ; la carte locale (N ≈ 5) est plus précise et plus robuste quand un obstacle bouge ou que les scans sont espacés. C'est la méthode adaptée à un robot qui scanne en avançant.</p>
             <div class="grid2">
               <div class="field"><label for="regRef">Scan de référence</label><select id="regRef"></select></div>
+              <div class="field"><label for="regN">N (carte locale)</label><input type="number" id="regN" value="5" min="2" max="12" step="1" disabled></div>
               <div class="field"><label for="regMode">Où chercher</label><select id="regMode">
                 <option value="ref">Près de la référence</option>
                 <option value="near">Près de la pose saisie</option>
@@ -1911,6 +1912,7 @@ function registerScan(ref, testScan, o = {}) {
     if (seeds.length >= K) break;
   }
   const mid = makeFieldScorer(ref.field, pts, 220), tmp = {}, out = [];
+  const inWin = q => Math.hypot(q.x - center.x, q.y - center.y) <= R * 1.15 && (full || Math.abs(wrapDeg(q.th - center.th)) <= thr * 1.15);   // la recherche ne doit pas sortir de la fenêtre demandée
   for (const sd of seeds) {                                           // chaque graine : multi-résolution locale, puis ICP point-à-ligne
     let r = searchMulti(mid, sd, { xy: Math.max(0.25, sxy * 1.6), th: Math.max(6, sth * 1.6) }, { beam: 2 }); evals += r.evals;
     let best = r.pose, bs = regStats(ref.field, pts, best);
@@ -1921,8 +1923,8 @@ function registerScan(ref, testScan, o = {}) {
     }, { tau0: 0.25, tauMin: 0.06, decay: 0.8, maxIter: 40 });
     evals += ic.evals;
     const bs2 = regStats(ref.field, pts, ic.pose);
-    if (bs2.score >= bs.score) { best = ic.pose; bs = bs2; }
-    out.push({ pose: best, ...bs });
+    if (bs2.score >= bs.score && inWin(ic.pose)) { best = ic.pose; bs = bs2; }
+    if (inWin(best)) out.push({ pose: best, ...bs });
   }
   const testBins = polarBins(pts);
   for (const c of out) { Object.assign(c, visConflicts(ref, testBins, pts, c.pose)); c.merit = c.inlierFrac - 2 * (c.vT + c.vR); }
@@ -1934,11 +1936,47 @@ function registerScan(ref, testScan, o = {}) {
   const ambiguity = alt ? Math.max(0, alt.merit) / Math.max(best.merit, 1e-9) : 0;
   const lim = Object.assign({ minInl: 0.2, goodInl: 0.45, ambig: 0.8, altInl: 0.75 }, o.limits);
   let verdict = 'bonne', reason = '';
+  let chosen = best, tied = false;
+  if (alt && o.prior && ambiguity >= lim.ambig && alt.inlierFrac >= lim.altInl * best.inlierFrac) {   // ex æquo : on garde celle qui colle le mieux au mouvement prévu
+    const dist = c => Math.hypot(c.pose.x - o.prior.x, c.pose.y - o.prior.y) + 0.02 * Math.abs(wrapDeg(c.pose.th - o.prior.th));
+    if (dist(alt) < dist(best) - 0.1) { chosen = alt; tied = true; }
+  }
+  if (chosen !== best) { cands.splice(cands.indexOf(chosen), 1); cands.unshift(chosen); }
   if (best.inlierFrac < lim.minInl) { verdict = 'echec'; reason = 'les deux scans se recouvrent trop peu'; }
-  else if (ambiguity >= lim.ambig && alt.inlierFrac >= lim.altInl * best.inlierFrac) { verdict = 'ambigue'; reason = 'plusieurs positions expliquent aussi bien le scan'; }
+  else if (ambiguity >= lim.ambig && alt.inlierFrac >= lim.altInl * best.inlierFrac) {
+    if (o.prior) { verdict = 'douteuse'; reason = 'deux positions possibles, départagées par le mouvement prévu'; }
+    else { verdict = 'ambigue'; reason = 'plusieurs positions expliquent aussi bien le scan'; }
+  }
   else if (best.inlierFrac < lim.goodInl) { verdict = 'douteuse'; reason = 'recouvrement faible'; }
-  return { ok: verdict !== 'echec', verdict, reason, pose: best.pose, inlierFrac: best.inlierFrac, rms: best.rms, score: best.score, ambiguity,
+  return { ok: verdict !== 'echec', verdict, reason, pose: chosen.pose, inlierFrac: chosen.inlierFrac, rms: chosen.rms, score: chosen.score, ambiguity,
            candidates: cands.slice(0, 4), ms: nowMs() - t0, evals };
+}
+
+/* ---------- Suivi d'une trajectoire : carte locale des N derniers scans ---------- */
+function composePose(a, b) { const c = Math.cos(a.th * D2R), s = Math.sin(a.th * D2R); return { x: a.x + c * b.x - s * b.y, y: a.y + s * b.x + c * b.y, th: wrapDeg(a.th + b.th) }; }
+function invPose(a) { const c = Math.cos(a.th * D2R), s = Math.sin(a.th * D2R); return { x: -(c * a.x + s * a.y), y: s * a.x - c * a.y, th: wrapDeg(-a.th) }; }
+const VERDICT_RANK = { bonne: 3, douteuse: 2, ambigue: 1, echec: 0 };
+/* cfg : { N (scans de la carte locale, 1 = scan précédent seul), radius (m), thRange (°), retry (bool) } */
+function trackerNew(cfg = {}) { return { cfg: Object.assign({ N: 1, radius: 1.0, thRange: 40, retry: true }, cfg), items: [] }; }
+/* Ajoute un scan. hint (facultatif) : pose attendue (odométrie, consigne…). Renvoie le résultat de registerScan (+ pose, trusted, pass). */
+function trackerStep(tr, scan, hint) {
+  const c = tr.cfg, it = tr.items, trusted = it.filter(x => x.trusted);
+  if (!it.length) { const pose = hint ? { ...hint } : { x: 0, y: 0, th: 0 }; it.push({ scan, pose, trusted: true, verdict: 'base' }); return { ok: true, verdict: 'base', pose, trusted: true, candidates: [], ms: 0, pass: 0 }; }
+  const last = it[it.length - 1], refItems = (trusted.length ? trusted : [last]).slice(-Math.max(1, c.N));
+  let prior = last.pose;                                              // mouvement prévu : même déplacement que le pas précédent
+  if (it.length >= 2 && last.trusted && it[it.length - 2].trusted) prior = composePose(last.pose, composePose(invPose(it[it.length - 2].pose), last.pose));
+  if (hint) prior = hint;
+  const center = hint || last.pose, gap = it.length - 1 - it.lastIndexOf(refItems[refItems.length - 1]), grow = 1 + 0.6 * gap;
+  const ref = makeRefFromScans(refItems.map(x => ({ scan: x.scan, pose: x.pose })));
+  const base = { center, radius: c.radius * grow, thRange: Math.min(180, c.thRange * grow), prior };
+  let res = registerScan(ref, scan, { ...base, candidates: 4, stepXY: 0.25 }), pass = 1;
+  if (c.retry && res.verdict !== 'bonne') {                           // deuxième chance : recherche plus fine et plus large
+    const r2 = registerScan(ref, scan, { ...base, radius: base.radius * 1.8, thRange: Math.min(180, base.thRange * 1.8), candidates: 12, stepXY: 0.15 });
+    if ((VERDICT_RANK[r2.verdict] ?? 0) > (VERDICT_RANK[res.verdict] ?? 0) || ((VERDICT_RANK[r2.verdict] ?? 0) === (VERDICT_RANK[res.verdict] ?? 0) && r2.inlierFrac > res.inlierFrac)) { r2.ms += res.ms; res = r2; pass = 2; }
+  }
+  const good = res.verdict === 'bonne', pose = (res.verdict === 'bonne' || res.verdict === 'douteuse') && res.pose ? res.pose : prior;
+  it.push({ scan, pose, trusted: good, verdict: res.verdict });
+  return { ...res, pose, trusted: good, pass };
 }
 /* CORE-END */
 
@@ -3453,39 +3491,46 @@ const REG_LABEL = { bonne: ['Fiable', 'ok'], douteuse: ['À vérifier', 'warn'],
 const regPoseTxt = p => `x ${fmt(p.x, 2)} m · y ${fmt(p.y, 2)} m · θ ${fmt(p.th, 1)}°`;
 function regRefreshSelects() {
   const sel = $('regRef'), cur = sel.value;
-  sel.innerHTML = '<option value="prev">Le scan précédent (conseillé)</option>'
+  sel.innerHTML = '<option value="prev">Le scan précédent (par défaut)</option>'
+    + (state.scans.length > 2 ? '<option value="local">Carte locale (N derniers scans)</option>' : '')
     + state.scans.map((s, i) => `<option value="${i}">${esc(s.name)}${i === 0 ? ' (1er scan)' : ''}</option>`).join('')
     + (state.scans.length > 2 ? '<option value="all">Tous les autres scans</option>' : '');
-  sel.value = [...sel.options].some(o => o.value === cur) ? cur : 'prev';
+  sel.value = [...sel.options].some(o => o.value === cur) ? cur : 'prev'; regSyncN();
   $('btnReg').disabled = $('btnRegAll').disabled = state.scans.length < 2 || reg.busy;
 }
+const regSyncN = () => { $('regN').disabled = $('regRef').value !== 'local'; };
+$('regRef').addEventListener('change', regSyncN);
 $('regMode').addEventListener('change', () => {
   const wide = $('regMode').value === 'wide';
   $('regRadius').value = wide ? 6 : 1.5; $('regAngle').value = wide ? 180 : 45;
 });
 function regParams() {
   const num = (id, d, lo, hi) => { const v = parseFloat($(id).value); return isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
-  return { mode: $('regMode').value, radius: num('regRadius', 1.5, 0.2, 10), angle: num('regAngle', 45, 2, 180) };
+  return { mode: $('regMode').value, radius: num('regRadius', 1.5, 0.2, 10), angle: num('regAngle', 45, 2, 180), N: Math.round(num('regN', 5, 2, 12)) };
 }
 /* Référence pour la cible idx : le scan précédent (par défaut), un scan choisi, ou tous les autres.
    poseOf(s) donne la pose à utiliser pour un scan (par défaut sa pose actuelle ; en recalage en chaîne : la pose qui vient d'être trouvée). */
-function regRefList(idx, refChoice, extra, poseOf = s => s.pose) {
+function regRefList(idx, refChoice, extra, poseOf = s => s.pose, trustOf = null) {
   const items = [];
   const add = s => { if (s !== state.scans[idx]) items.push({ scan: cleanOf(s), pose: { ...poseOf(s) } }); };
   if (refChoice === 'all') state.scans.forEach((s, i) => { if (s.visible !== false) add(s); });
   else if (refChoice === 'prev') { if (idx > 0) add(state.scans[idx - 1]); }
+  else if (refChoice === 'local') { for (let k = Math.max(0, idx - (regParams().N)); k < idx; k++) if (!trustOf || trustOf(state.scans[k])) add(state.scans[k]); }
   else add(state.scans[+refChoice]);
   for (const d of extra || []) if (d.scan !== state.scans[idx] && !items.some(it => it.scan === cleanOf(d.scan))) items.push({ scan: cleanOf(d.scan), pose: { ...d.pose } });
   return items;
 }
-function regSearch(idx, items, P) {
+function regSearch(idx, items, P, refChoice = 'prev') {
   const target = state.scans[idx], ref = makeRefFromScans(items);
   if (!ref) return { verdict: 'echec', reason: 'la référence n’a pas assez de points', candidates: [], ms: 0 };
-  const wide = P.mode === 'wide';
+  const wide = P.mode === 'wide', last = items[items.length - 1].pose;
   const cx = items.reduce((a, it) => a + it.pose.x, 0) / items.length, cy = items.reduce((a, it) => a + it.pose.y, 0) / items.length;
-  // « ref » : on cherche autour de la pose du scan de référence (le robot n'a pas beaucoup bougé) ; « near » : autour de la pose saisie ; « wide » : partout
-  const center = P.mode === 'near' ? { ...target.pose } : { x: cx, y: cy, th: wide ? 0 : items[items.length - 1].pose.th };
-  return registerScan(ref, cleanOf(target), { center, radius: P.radius, thRange: wide ? 180 : P.angle, limits: wide ? { ambig: 0.6, altInl: 0.6 } : undefined });
+  // « ref » : on cherche autour de la pose du dernier scan de référence (le robot n'a pas beaucoup bougé) ; « near » : autour de la pose saisie ; « wide » : partout
+  const meanCentre = refChoice === 'all';
+  const center = P.mode === 'near' ? { ...target.pose } : { x: meanCentre ? cx : last.x, y: meanCentre ? cy : last.y, th: wide ? 0 : last.th };
+  let prior;                                                          // mouvement prévu = même pas que le précédent (sert seulement à départager deux positions aussi bonnes)
+  if (!wide && (refChoice === 'prev' || refChoice === 'local') && idx >= 2) prior = composePose(state.scans[idx - 1].pose, composePose(invPose(state.scans[idx - 2].pose), state.scans[idx - 1].pose));
+  return registerScan(ref, cleanOf(target), { center, radius: P.radius, thRange: wide ? 180 : P.angle, limits: wide ? { ambig: 0.6, altInl: 0.6 } : undefined, prior: P.mode === 'ref' ? prior : undefined });
 }
 function regApply(changes) {                                        // changes : [{scan, pose}] ; mémorise les anciennes poses pour Annuler
   reg.undo = changes.map(c => ({ scan: c.scan, pose: { ...c.scan.pose } }));
@@ -3512,7 +3557,7 @@ async function regRun(idx, o = {}) {
   if (!items.length) { setStatus('regStatus', 'Il faut au moins deux scans : un de référence et celui à placer.', 'err'); return; }
   regBusy(true, `Recherche de la position de ${target.name}…`); await nextPaint();
   let res;
-  try { res = regSearch(idx, items, regParams()); } catch (e) { regBusy(false); setStatus('regStatus', 'Le recalage a échoué : ' + e.message, 'err'); return; }
+  try { res = regSearch(idx, items, regParams(), refChoice); } catch (e) { regBusy(false); setStatus('regStatus', 'Le recalage a échoué : ' + e.message, 'err'); return; }
   regBusy(false);
   state.selected = idx; renderScanList();
   const [lab, cls] = REG_LABEL[res.verdict];
@@ -3543,18 +3588,23 @@ $('btnReg').onclick = () => regRun(state.selected >= 0 ? state.selected : state.
 /* Tous les scans à partir de la référence : chaque scan se recale sur la référence et sur les scans déjà trouvés fiables. */
 $('btnRegAll').onclick = async () => {
   if (reg.busy || state.scans.length < 2) return;
-  const choice = $('regRef').value, chain = choice === 'prev';
+  const choice = $('regRef').value, chain = choice === 'prev' || choice === 'local';
   const base = chain ? 0 : (choice === 'all' ? 0 : +choice);
   const P = regParams(), done = [], rows = [], changes = [];          // done : scans déjà trouvés fiables (hors chaîne), à leur pose trouvée, pas encore appliquée
-  const found = new Map([[state.scans[base], { ...state.scans[base].pose }]]);   // en chaîne : poses trouvées, utilisées par le scan suivant
+  const useTracker = chain && P.mode === 'ref';                       // suivi : références = N derniers scans fiables, mouvement prévu, 2e essai plus large
+  const tr = useTracker ? trackerNew({ N: choice === 'local' ? P.N : 1, radius: P.radius, thRange: P.angle }) : null;
+  const found = new Map([[state.scans[base], { ...state.scans[base].pose }]]), okSet = new Set([state.scans[base]]);   // en chaîne : poses trouvées, utilisées par le scan suivant
   regBusy(true, 'Recalage de tous les scans…');
+  if (tr) trackerStep(tr, cleanOf(state.scans[base]), { ...state.scans[base].pose });
   for (let i = 0; i < state.scans.length; i++) {
     if (i === base) continue;
     const s = state.scans[i]; setStatus('regStatus', `Recalage de ${s.name} (${rows.length + 1}/${state.scans.length - 1})…`, ''); await nextPaint();
-    const res = chain ? regSearch(i, regRefList(i, 'prev', null, sc => found.get(sc) || sc.pose), P) : regSearch(i, regRefList(i, String(base), done), P);
+    let res;
+    if (tr) res = trackerStep(tr, cleanOf(s));
+    else res = chain ? regSearch(i, regRefList(i, choice, null, sc => found.get(sc) || sc.pose, sc => okSet.has(sc)), P, choice) : regSearch(i, regRefList(i, String(base), done), P, String(base));
     rows.push({ s, res });
     if (res.verdict !== 'echec') changes.push({ scan: s, pose: res.pose });
-    if (chain) found.set(s, res.verdict !== 'echec' ? res.pose : { ...s.pose });
+    if (chain) { found.set(s, res.verdict !== 'echec' && res.pose ? res.pose : { ...s.pose }); if (res.verdict === 'bonne') okSet.add(s); }
     else if (res.verdict === 'bonne') done.push({ scan: s, pose: res.pose });
   }
   regBusy(false);
@@ -3563,7 +3613,7 @@ $('btnRegAll').onclick = async () => {
   const html = rows.map(r => { const { s, res } = r; const [lab, cls] = REG_LABEL[res.verdict];
     return `<tr><td>${esc(s.name)}</td><td><span class="badge ${cls}">${lab}</span></td><td>${res.pose && res.verdict !== 'echec' ? esc(regPoseTxt(res.pose)) : '–'}</td><td>${isFinite(res.inlierFrac) ? Math.round(100 * res.inlierFrac) + ' %' : '–'}</td><td>${res.verdict === 'ambigue' || res.verdict === 'douteuse' ? `<button class="btn sm" type="button" data-row="${rows.indexOf(r)}">Autres positions</button>` : ''}</td></tr>`; }).join('');
   $('regResult').innerHTML = `<table class="rg"><thead><tr><th>Scan</th><th>Résultat</th><th>Position</th><th>Recouvrement</th><th></th></tr></thead><tbody>${html}</tbody></table>
-    <div class="hint">${chain ? 'Chaque scan est recalé sur le précédent : une erreur se propage aux scans suivants, donc vérifiez d’abord les lignes « À vérifier » ou « Ambigu ».' : 'Seuls les scans « Fiable » servent de référence aux suivants.'} Vérifiez sur la carte, ou relancez les scans douteux un par un.</div>`;
+    <div class="hint">${chain ? (choice === 'local' ? `Chaque scan est recalé sur la carte des ${P.N} derniers scans fiables : une erreur isolée se dilue, mais vérifiez quand même les lignes « À vérifier » ou « Ambigu ».` : 'Chaque scan est recalé sur le précédent : une erreur se propage aux scans suivants, donc vérifiez d’abord les lignes « À vérifier » ou « Ambigu ».') : 'Seuls les scans « Fiable » servent de référence aux suivants.'} Vérifiez sur la carte, ou relancez les scans douteux un par un.</div>`;
   $('regResult').querySelectorAll('[data-row]').forEach(b => b.onclick = () => { const r = rows[+b.dataset.row]; state.selected = state.scans.indexOf(r.s); renderScanList(); draw(); regShowResult(r.s, r.res); });
   const bad = rows.filter(r => r.res.verdict !== 'bonne').length;
   setStatus('regStatus', bad ? `${rows.length - bad} scan(s) placé(s) avec confiance, ${bad} à vérifier.` : `${rows.length} scan(s) placé(s).`, bad ? 'warn' : 'ok');

@@ -38,11 +38,17 @@ terminées passent en bleu avec une coche, les suivantes restent grisées. Chaqu
    **Retrouver la position automatiquement** (bas de l'étape 3, ou case « Placer chaque nouveau scan par recalage » à l'étape 2) :
    la page recale le scan choisi dans la liste, sans qu'on mesure sa position.
    - **Référence : le scan précédent (par défaut).** Chaque scan est placé par rapport à celui d'avant : c'est la méthode adaptée
-     à un robot qui scanne en avançant. La liste déroulante permet de choisir un autre scan (le 1er, un scan précis) ou « Tous les autres scans ».
+     à un robot qui scanne en avançant. La liste déroulante permet de choisir un autre scan (le 1er, un scan précis), « Tous les autres scans »,
+     ou **« Carte locale (N derniers scans) »** : le scan est recalé sur la carte fusionnée des N derniers scans *fiables* (N = 5 conseillé).
+     Plus précis et plus robuste que le scan précédent seul (simulation, 40 scans, bruit 1 cm : 0,5 à 1 cm d'erreur moyenne avec N = 5 contre 1 à 2,4 cm
+     avec N = 1) ; avec des scans espacés de 0,8 m, du bruit et un obstacle qui bouge, le scan précédent seul décroche (erreur de plusieurs mètres) et la carte locale tient (~1 cm).
+     La recherche est toujours bornée par le rayon et l'angle demandés, et le « mouvement prévu » (même pas que le précédent) départage deux positions
+     aussi bonnes (le scan est alors marqué « À vérifier »).
    - **Où chercher** : *Près de la référence* (par défaut : autour de la pose du scan de référence, rayon 1,5 m et ±45°, à adapter à la distance
      réellement parcourue entre deux scans), *Près de la pose saisie* (autour de la position tapée dans la liste) ou *Partout* (6 m, tous les angles :
      dans une salle rectangulaire la symétrie peut tromper, la page affiche alors **Ambigu** et propose les autres positions).
-   - **Recaler tous les scans** (facultatif) : avec « le scan précédent », recalage en chaîne du 1er au dernier (une erreur se propage aux scans suivants :
+   - **Recaler tous les scans** (facultatif) : avec « le scan précédent » ou la carte locale, recalage en chaîne du 1er au dernier (avec le scan précédent seul, une erreur se propage
+     aux scans suivants ; avec la carte locale elle se dilue ; un scan « Ambigu » ou en « Échec » ne sert jamais de référence, et un second essai, plus large, est tenté ;
      vérifier d'abord les lignes « À vérifier » ou « Ambigu »). Avec un scan choisi, tous les scans sont recalés sur lui et sur ceux déjà trouvés fiables.
    - Case de l'étape 2 (désactivée par défaut) : chaque scan capturé est recalé aussitôt sur le précédent.
    - Verdicts : *Fiable* (bon recouvrement, une seule solution), *À vérifier* (recouvrement faible), *Ambigu* (plusieurs solutions aussi bonnes),
@@ -102,7 +108,7 @@ mais exigent une pose initiale proche. Sur le banc simulé (bruit 2 cm, 6 % de p
 tombe à 75 % vers 0,5 m / 15° ; le filtre à particules tient encore à 1,2 m / 40°. **Rien de cela n'a été mesuré avec ton lidar** :
 refaire les mesures sur tes scans.
 
-Tests du noyau (Node) : `node tests/web_loc_test.js lidar_web.html` (150 vérifications) et `node tests/web_reg_test.js lidar_web.html` (32 vérifications, recalage automatique).
+Tests du noyau (Node) : `node tests/web_loc_test.js lidar_web.html` (150 vérifications) et `node tests/web_reg_test.js lidar_web.html` (40 vérifications, recalage automatique et carte locale).
 
 ## Ordre de travail conseillé
 

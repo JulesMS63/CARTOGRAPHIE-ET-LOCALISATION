@@ -2,7 +2,7 @@
 const fs = require('fs'), assert = require('assert');
 const html = fs.readFileSync(process.argv[2], 'utf8');
 const core = html.split('/* CORE-START */')[1].split('/* CORE-END */')[0];
-const A = new Function(core + `; return {simulateScan, benchDataset, makeRefFromScans, registerScan, poseError, offsetPose, randomOffset, makeRng, densify, validPts, polarBins, visConflicts};`)();
+const A = new Function(core + `; return {simulateScan, benchDataset, makeRefFromScans, registerScan, poseError, offsetPose, randomOffset, makeRng, densify, validPts, polarBins, visConflicts, trackerNew, trackerStep, composePose, invPose, SIM_WALLS, wrapDeg};`)();
 let n = 0; const ok = (c, m) => { assert(c, m); n++; };
 const data = A.benchDataset(7, { noise: 0.01, outliers: 0.03 });
 const refOf = (idx) => A.makeRefFromScans(idx.map(i => ({ scan: data[i].scan, pose: data[i].truth })));
@@ -72,7 +72,55 @@ ok(a.pose.x === b.pose.x && a.pose.th === b.pose.th, 'résultat identique à ent
   ok(e.pos < 0.05 && e.ang < 2, 'chaîne de 14 scans : erreur finale ' + e.pos.toFixed(3) + ' m / ' + e.ang.toFixed(1) + '°');
   // un scan hors de la fenêtre de recherche n'est jamais annoncé « fiable » à tort
   const far = A.registerScan(A.makeRefFromScans([{ scan: scans[0], pose: truth[0] }]), scans[6], { center: truth[0], radius: 0.5, thRange: 10 });
-  const ef = A.poseError(far.pose, truth[6]);
-  ok(ef.pos <= 0.05 || far.verdict !== 'bonne', 'hors fenêtre : pas de faux « fiable »');
+  ok(!far.pose || A.poseError(far.pose, truth[6]).pos <= 0.05 || far.verdict !== 'bonne', 'hors fenêtre : pas de faux « fiable »');
+  ok(!far.pose || (Math.hypot(far.pose.x - truth[0].x, far.pose.y - truth[0].y) <= 0.5 * 1.15 + 1e-9 && Math.abs(A.wrapDeg(far.pose.th - truth[0].th)) <= 11.5 + 1e-9), 'la pose trouvée ne sort jamais de la fenêtre demandée');
+}
+
+// --- suivi par carte locale (N derniers scans) : obstacle qui bouge, pas de 0,8 m, plusieurs graines
+function trajectory(seed, steps, step) {
+  const rg = A.makeRng(seed); let p = { x: 1, y: 1, th: 0 }; const T = [];
+  for (let i = 0; i < steps; i++) {
+    T.push({ ...p });
+    let nx = p.x + step * Math.cos(p.th * Math.PI / 180), ny = p.y + step * Math.sin(p.th * Math.PI / 180), th = p.th;
+    if (nx < 0.6 || nx > 5.4 || ny < 0.6 || ny > 3.4) { th += 35; nx = p.x; ny = p.y; } else th += 12 * (rg() - 0.3);
+    p = { x: nx, y: ny, th };
+  }
+  return T;
+}
+function dynScans(T, seed, noise, outl) {                           // une boîte de 0,5 m posée ailleurs à chaque scan (jamais sur le capteur)
+  const rg = A.makeRng(seed + 100), h = 0.25;
+  return T.map((p, i) => {
+    let cx, cy; do { cx = 1 + 4 * rg(); cy = 0.8 + 2.4 * rg(); } while (Math.hypot(cx - p.x, cy - p.y) < 0.7);
+    const walls = A.SIM_WALLS.concat([[cx - h, cy - h, cx + h, cy - h], [cx + h, cy - h, cx + h, cy + h], [cx + h, cy + h, cx - h, cy + h], [cx - h, cy + h, cx - h, cy - h]]);
+    return A.simulateScan('d' + i, p, rg, { noise, outliers: outl, walls });
+  });
+}
+function track(T, scans, N) {
+  const tr = A.trackerNew({ N }); let bad = 0;
+  scans.forEach((s, i) => { const r = A.trackerStep(tr, s, i === 0 ? T[0] : null); if (r.verdict !== 'bonne' && r.verdict !== 'base') bad++; });
+  const e = tr.items.map((it, i) => A.poseError(it.pose, T[i]).pos);
+  return { rms: Math.sqrt(e.reduce((a, b) => a + b * b, 0) / e.length), max: Math.max(...e), bad };
+}
+{
+  const res = {};
+  for (const seed of [11, 12, 13]) {
+    const T = trajectory(seed, 30, 0.5), sc = dynScans(T, seed, 0.01, 0.03);
+    res[seed] = { n1: track(T, sc, 1), n5: track(T, sc, 5) };
+    ok(res[seed].n5.rms < 0.03 && res[seed].n5.max < 0.06, 'carte locale N=5, obstacle mobile, graine ' + seed + ' : erreur ' + (100 * res[seed].n5.rms).toFixed(1) + ' cm (max ' + (100 * res[seed].n5.max).toFixed(1) + ' cm)');
+  }
+  const mean = k => [11, 12, 13].reduce((a, s) => a + res[s][k].rms, 0) / 3;
+  ok(mean('n5') <= mean('n1') * 1.05, 'la carte locale (N=5) est au moins aussi précise que le scan précédent seul');
+  // pas de 0,8 m, bruit 2 cm, 6 % de parasites : le scan précédent seul décroche, la carte locale tient
+  const T = trajectory(12, 40, 0.8), sc = dynScans(T, 12, 0.02, 0.06), a = track(T, sc, 1), b = track(T, sc, 5);
+  ok(b.rms < 0.05 && b.max < 0.10, 'pas de 0,8 m + obstacle mobile : carte locale ' + (100 * b.rms).toFixed(1) + ' cm, scan précédent seul ' + (100 * a.rms).toFixed(0) + ' cm');
+  ok(b.rms <= a.rms, 'la carte locale ne fait jamais pire que le scan précédent seul');
+}
+// --- départage de deux positions aussi bonnes par le mouvement prévu
+{
+  const T = trajectory(12, 30, 0.5), sc = dynScans(T, 12, 0.01, 0.03), est = [T[0]];
+  const tr = A.trackerNew({ N: 3 });
+  sc.forEach((s, i) => A.trackerStep(tr, s, i === 0 ? T[0] : null));
+  const e = tr.items.map((it, i) => A.poseError(it.pose, T[i]).pos);
+  ok(Math.max(...e) < 0.06, 'N=3, graine 12 (deux positions presque aussi bonnes au lien 23) : le mouvement prévu départage, erreur max ' + (100 * Math.max(...e)).toFixed(1) + ' cm');
 }
 console.log('reg_test : ' + n + ' vérifications OK');
