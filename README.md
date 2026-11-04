@@ -160,6 +160,11 @@ Une touche du pavé, le bouton ■ ou **Reprendre la main** rendent la main (le 
 Réglages (Réglages du SLAM) : pas latéral maximal, ligne droite maximale, marge autour du robot, écart entre points de vue, nombre de scans et durée maximale.
 Limites : le lidar voit à hauteur de son plan seulement (pas les pieds de table ni un obstacle plus bas) et le robot n'a pas de capteur de choc ; testé en simulation (salle de 6 × 4 m avec pilier et meuble, robot virtuel lent, normal et rapide, 0 collision) et avec un faux lien Wi-Fi, mais pas encore sur le vrai robot : premier essai à vitesse faible, sous surveillance.
 
+#### Suivi de trajectoire (v30)
+Dans l'onglet SLAM, sous les boutons de l'automatique : **Tracer un trajet**, puis dessine le chemin à la souris sur la carte (maintiens le bouton, trace, relâche, comme un crayon sur Paint). Le trait est simplifié (un point au plus tous les 30 cm) et s'affiche en orange avec un drapeau à l'arrivée. **Suivre le trajet** lance le robot (le SLAM démarre tout seul s'il ne l'était pas ; connexion Wi-Fi du robot nécessaire). **Retracer un trajet** ou **Effacer le trajet** remplacent ou retirent le tracé ; **Arrêter le suivi**, une touche du pavé ou **Reprendre la main** rendent la main.
+Le robot conduit comme en exploration automatique (il se tourne, puis avance droit sur les 4 roues ; pas latéraux seulement en zone resserrée), mais sa cible est le prochain point du trajet. À chaque pas, le chemin est recalculé sur la carte du lidar : un obstacle ou un meuble sur le trait est contourné, puis le robot rejoint la suite du tracé. Un point qui tombe dans un meuble ou un mur est sauté (« Trajet terminé : … 3 points sautés »). La partie déjà faite passe en vert. Le suivi s'arrête à l'arrivée (rayon 20 cm), sur la durée maximale des réglages, ou dans les mêmes cas que l'automatique (robot perdu, bloqué, Wi-Fi coupé). Pas de limite de scans en suivi, ni de retour à la base.
+Testé en simulation : trait droit à travers le pilier (contourné, 0 collision, arrivée à 19 cm), à travers le meuble (points sautés, arrivée à 28 cm), robot lent avec latence et dérive (arrivée à 11 cm, 0 collision). Pas encore essayé sur le vrai robot.
+
 ### Pilotage automatique (capteur ultrason + servo)
 
 Matériel : HC-SR04 (TRIG = D23, ECHO = D22, 5 V) et micro servo 9 g sur D26 (5 V), le servo porte le capteur (90° = droit devant).
