@@ -3085,9 +3085,10 @@ function gridImage(g, strong = false) {
   const dark = darkMq.matches;
   const occ = strong ? (dark ? [226, 232, 240, 255] : [26, 32, 39, 255]) : (dark ? [226, 232, 240, 70] : [26, 32, 39, 60]);
   const free = strong ? (dark ? [148, 163, 184, 70] : [100, 116, 139, 55]) : (dark ? [148, 163, 184, 38] : [100, 116, 139, 30]);
+  const unk = strong ? (dark ? [0, 0, 0, 125] : [15, 23, 42, 80]) : null;   // jamais vu par le lidar (derrière un mur ou un meuble) : plus foncé
   for (let j = 0; j < g.ny; j++) for (let i = 0; i < g.nx; i++) {
     const v = cls[j * g.nx + i], px = ((g.ny - 1 - j) * g.nx + i) * 4;     // ligne 0 de l'image = y max
-    const col = v === 1 ? occ : v === 0 ? free : null;
+    const col = v === 1 ? occ : v === 0 ? free : unk;
     if (!col) continue;
     img.data[px] = col[0]; img.data[px + 1] = col[1]; img.data[px + 2] = col[2]; img.data[px + 3] = col[3];
   }
@@ -3150,7 +3151,8 @@ function renderGridStats() {
   box.innerHTML = `<table><thead><tr><th></th><th>Sans filtre</th><th>Avec filtre</th></tr></thead><tbody>
     <tr><td>Cellules occupées</td><td>${st.raw.occ}</td><td><b>${st.flt.occ}</b></td></tr>
     <tr><td>dont isolées</td><td>${st.raw.iso}</td><td><b>${st.flt.iso}</b></td></tr>
-    <tr><td>Points ignorés</td><td>0</td><td><b>${st.ignored}</b> (${pct} %)</td></tr></tbody></table>`;
+    <tr><td>Points ignorés</td><td>0</td><td><b>${st.ignored}</b> (${pct} %)</td></tr></tbody></table>
+    <p class="hint">Zone sombre : jamais vue par le lidar (derrière un mur ou un meuble). Zone claire : libre ; trait noir : obstacle.</p>`;
 }
 
 /* ---------- dessin ---------- */
