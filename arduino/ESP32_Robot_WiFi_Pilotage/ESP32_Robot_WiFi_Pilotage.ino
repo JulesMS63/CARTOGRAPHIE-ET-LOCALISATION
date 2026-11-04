@@ -27,7 +27,7 @@
 //   A,1[,v[,pause]] pilotage automatique (capteur ultrason + servo) à la vitesse v %, avec une pause de
 //                   pause ms entre deux avances (0 = sans pause) ;  A,0 l'arrête. D, P ou S reprennent la main.
 //   S               arrêt
-//   Le sketch envoie aussi à la page : E,M (le robot bouge), E,R (il s'est arrêté), E,A,1/0 (auto marche/arrêt), E,D,cm (distance devant)
+//   Le sketch envoie aussi à la page : E,M (le robot bouge), E,R (il s'est arrêté), E,A,1 / E,A,0,raison (auto marche / arrêt), E,D,cm (distance devant)
 // La page répète D,... toutes les 100 ms tant qu'une touche est tenue.
 // Si plus rien n'arrive pendant 300 ms (touche relâchée, Wi-Fi coupé), le robot s'arrête.
 //
@@ -366,7 +366,7 @@ enum { A_OFF, A_AVANCE, A_PAUSE, A_REGARDE_G, A_REGARDE_D, A_TOURNE, A_RECULE, A
 int autoEtat = A_OFF;
 int autoPct = 55;                        // vitesse de croisière (%)
 uint32_t autoPauseMs = 0;                // 0 = avance sans s'arrêter ; sinon : pause entre deux avances (pour que le SLAM prenne un scan)
-uint32_t autoDebutMs = 0, autoSeq0 = 0, autoDistMsgMs = 0, autoDemarreMs = 0;
+uint32_t autoDebutMs = 0, autoSeq0 = 0, autoDistMsgMs = 0, autoDemarreMs = 0, autoRepos0 = 0;   // autoRepos0 : depuis quand le robot est arrêté
 float distG = 400, distD = 400, distF = 400;    // distances relevées à gauche, à droite et devant (cm)
 int autoEsquive = 0;                     // sens du glissement latéral (+1 gauche, -1 droite)
 int autoSens = 1;                        // sens du virage en cours (+1 gauche, -1 droite)
@@ -380,16 +380,18 @@ void autoRoule(int vx, int vy, int w, int pct) {
   piloter(vx, vy, w, pct);
 }
 void autoStop() {
-  if (enMouvement()) { arreter(); evenement("E,R"); }
+  if (enMouvement()) { arreter(); autoRepos0 = millis(); evenement("E,R"); }
 }
-void autoArreter(const char* raison) {
+// code : « E,A,0,code » prévient la page de la raison (main = la page a repris la main, muet, bloque, fin = demandé)
+void autoArreter(const char* raison, const char* code = "fin") {
   if (autoEtat == A_OFF) return;
   autoEtat = A_OFF;
   bool bougeait = enMouvement();
   arreter();
   servoVers(SERVO_CENTRE);
   Serial.printf("Pilotage automatique arrete : %s\n", raison);
-  evenement("E,A,0");
+  char m[24]; snprintf(m, sizeof(m), "E,A,0,%s", code);
+  evenement(m);
   if (bougeait) evenement("E,R");
 }
 void autoDemarrer(int pct, int pauseMs) {
@@ -397,7 +399,7 @@ void autoDemarrer(int pct, int pauseMs) {
   autoPct = constrain(pct, 40, 100);
   autoPauseMs = (uint32_t)constrain(pauseMs, 0, 10000);
   autoEchecs = 0;
-  autoDemarreMs = millis();
+  autoDemarreMs = millis(); autoRepos0 = autoDemarreMs;
   servoVers(SERVO_CENTRE);
   autoPhase(A_AVANCE);
   Serial.printf("Pilotage automatique : vitesse %d %%, pause %u ms\n", autoPct, (unsigned)autoPauseMs);
@@ -411,7 +413,7 @@ void automate() {
   dernierOrdreMs = millis();             // l'automate est lui-même la source des ordres : le coupe-circuit de 300 ms ne s'applique pas
   uint32_t t = millis(), dt = t - autoDebutMs;
 
-  if (t - max(dernierEchoValideMs, autoDemarreMs) > 4000) { autoArreter("le capteur ultrason ne voit rien (branchement TRIG D23 / ECHO D22 ? alimentation 5 V ?)"); return; }
+  if (t - max(dernierEchoValideMs, autoDemarreMs) > 4000) { autoArreter("le capteur ultrason ne voit rien (branchement TRIG D23 / ECHO D22 ? alimentation 5 V ?)", "muet"); return; }
   if (t - autoDistMsgMs > 400) {         // distance devant, affichée par la page
     autoDistMsgMs = t;
     char m[24]; snprintf(m, sizeof(m), "E,D,%d", (int)distanceCm());
@@ -432,8 +434,8 @@ void automate() {
       autoRoule(1, 0, 0, pct);
       break;
     }
-    case A_PAUSE:
-      if (dt >= autoPauseMs) autoPhase(A_AVANCE);
+    case A_PAUSE:                                        // repos minimum compté depuis l'arrêt (le regard sur les côtés en fait déjà partie)
+      if (t - autoRepos0 >= autoPauseMs) autoPhase(A_AVANCE);
       break;
     case A_REGARDE_G:
     case A_REGARDE_D: {
@@ -451,7 +453,7 @@ void automate() {
         else autoPhase(autoPauseMs > 0 ? A_PAUSE : A_AVANCE);
         break;
       }
-      if (max(distG, distD) < DIST_BLOQUE_CM) { if (++autoEchecs >= 4) { autoArreter("bloque de tous les cotes"); break; } autoPhase(A_RECULE); break; }
+      if (max(distG, distD) < DIST_BLOQUE_CM) { if (++autoEchecs >= 4) { autoArreter("bloque de tous les cotes", "bloque"); break; } autoPhase(A_RECULE); break; }
       autoSens = distG >= distD ? 1 : -1;
       servoVers(SERVO_CENTRE);
       autoPhase(A_TOURNE);
@@ -465,7 +467,7 @@ void automate() {
         autoStop(); autoEchecs = 0; autoPhase(autoPauseMs > 0 ? A_PAUSE : A_AVANCE);
       } else if (dt > TOURNE_MAX_MS) {
         autoStop();
-        if (++autoEchecs >= 4) autoArreter("je n'arrive pas a me degager");
+        if (++autoEchecs >= 4) autoArreter("je n'arrive pas a me degager", "bloque");
         else autoPhase(A_RECULE);
       }
       break;
@@ -488,7 +490,7 @@ void traiterCommande(uint8_t* payload, size_t length) {
   size_t n = length < sizeof(buf) - 1 ? length : sizeof(buf) - 1;
   memcpy(buf, payload, n);
   buf[n] = 0;
-  if (buf[0] == 'S' || buf[0] == 'D' || buf[0] == 'P') { testRoue = -1; autoArreter("la page a repris la main"); }   // un ordre de la page interrompt le test des roues et le pilotage automatique
+  if (buf[0] == 'S' || buf[0] == 'D' || buf[0] == 'P') { testRoue = -1; autoArreter("la page a repris la main", "main"); }   // un ordre de la page interrompt le test des roues et le pilotage automatique
 
   if (buf[0] == 'S') {
     if (enMouvement()) Serial.println("Ordre S : arret");
@@ -530,7 +532,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
       break;
     case WStype_DISCONNECTED:
       Serial.printf("[%u] Page deconnectee\n", num);
-      autoArreter("page deconnectee");
+      autoArreter("page deconnectee", "main");
       arreter();                         // plus personne ne pilote : on s'arrête
       break;
     case WStype_TEXT:
