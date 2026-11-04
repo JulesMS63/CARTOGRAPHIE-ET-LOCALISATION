@@ -215,6 +215,8 @@ void arreter() {
 }
 
 // Coupe les 8 canaux (utilisé par la page de test et à la fin d'un essai manuel).
+int testRoue = -1;                       // roue en cours d'essai (0 à 3), -1 = pas de test
+bool carteInitFaite = false;             // vérification I2C faite 1 s après le démarrage
 bool essaiManuel = false;                // un essai de la page de test est en cours
 uint32_t essaiFinMs = 0;
 
@@ -271,6 +273,7 @@ void traiterCommande(uint8_t* payload, size_t length) {
   size_t n = length < sizeof(buf) - 1 ? length : sizeof(buf) - 1;
   memcpy(buf, payload, n);
   buf[n] = 0;
+  if (buf[0] == 'S' || buf[0] == 'D' || buf[0] == 'P') testRoue = -1;   // un ordre de la page interrompt le test des roues
 
   if (buf[0] == 'S') {
     if (enMouvement()) Serial.println("Ordre S : arret");
@@ -529,18 +532,34 @@ void handleAck() {
   repondreEtat("test");
 }
 
-// --- Tests au moniteur série ---
-void testRoues() {
+// --- Tests au moniteur série (sans delay() : la boucle principale continue de tourner pendant le test) ---
+bool testRoueAllumee = false;
+uint32_t testChangementMs = 0;
+
+void testRouesDemarrer() {
   Serial.println("Test des roues (robot SOULEVE !). Chaque roue tourne vers l'avant 0,7 s.");
   if (!carteRepond()) Serial.println("  !! la carte ne repond pas (I2C 0x30), on essaie quand meme");
-  for (int r = 0; r < 4; r++) {
-    Serial.printf("  roue %d : %s\n", r + 1, NOM_ROUE[r]);
-    moteur(r, 170);
-    delay(700);
-    moteur(r, 0);
-    delay(300);
+  arreter();
+  testRoue = 0; testRoueAllumee = false; testChangementMs = millis();   // la 1re roue démarre au prochain passage de testRouesSuivre()
+}
+void testRouesArreter() { testRoue = -1; }
+
+void testRouesSuivre() {
+  if (testRoue < 0) return;
+  uint32_t t = millis();
+  if (!testRoueAllumee) {                                 // on lance la roue (après 0,3 s de pause entre deux roues)
+    if (testRoue > 0 && t - testChangementMs < 300) return;
+    Serial.printf("  roue %d : %s\n", testRoue + 1, NOM_ROUE[testRoue]);
+    moteur(testRoue, 170);
+    testRoueAllumee = true; testChangementMs = t;
+  } else if (t - testChangementMs >= 700) {               // 0,7 s écoulée : on l'arrête, puis roue suivante
+    moteur(testRoue, 0);
+    testRoueAllumee = false; testChangementMs = t;
+    if (++testRoue >= 4) {
+      testRoue = -1;
+      Serial.println("Fin du test. Si une roue tourne a l'envers : coche « inverser » pour son moteur sur la page de test. Si ce n'est pas la bonne roue qui bouge, dis-le moi.");
+    }
   }
-  Serial.println("Fin du test. Si une roue tourne a l'envers : coche « inverser » pour son moteur sur la page de test. Si ce n'est pas la bonne roue qui bouge, dis-le moi.");
 }
 
 // Recherche large : toutes les paires de broches libres (on teste avec un objet temporaire).
@@ -570,9 +589,9 @@ void scannerBroches() {
 void commandeSerie() {
   while (Serial.available()) {
     char c = Serial.read();
-    if (c == 't') testRoues();
-    else if (c == 'f') { Serial.println("Avance 1 s"); piloter(1, 0, 0, 70); delay(1000); arreter(); }
-    else if (c == 'x') { Serial.println("Arret"); arreter(); }
+    if (c == 't') testRouesDemarrer();
+    else if (c == 'f') { Serial.println("Avance 1 s"); testRouesArreter(); piloter(1, 0, 0, 70); essaiManuel = true; essaiFinMs = millis() + 1000; }
+    else if (c == 'x') { Serial.println("Arret"); testRouesArreter(); arreter(); }
     else if (c == 'i') scannerBroches();
   }
 }
@@ -585,7 +604,6 @@ void setup() {
   uint8_t masque = memoire.getUChar("sens2", 0x06);   // 0x06 = M2 et M3 inversés (réglage par défaut)
   for (int i = 0; i < 4; i++) sensMoteur[i] = (masque >> i) & 1 ? -1 : 1;
   Serial.begin(115200);
-  delay(300);
   Serial.println();
   Serial.println("[1/4] Demarrage du Wi-Fi...");
 
@@ -622,10 +640,7 @@ void setup() {
     Serial.println("      (pour tester l'I2C a la place : page http://192.168.4.1/, choix du mode)");
   } else {
     Serial.println("[4/4] Carte moteur (I2C 0x30, SDA = GPIO19, SCL = GPIO21)...");
-    delay(1000);                                  // la carte moteur a besoin d'un instant après la mise sous tension
-    car->Stop();
-    if (cartePresente(car)) Serial.println("[4/4] La carte moteur repond (ACK)");
-    else Serial.println("[4/4] !! La carte moteur ne repond pas. Batteries ? Interrupteur de la carte ?");
+    // la carte moteur a besoin d'une seconde après la mise sous tension : sa vérification se fait dans loop(), sans bloquer
   }
   Serial.printf("Sens des moteurs (page de test, « inverser ») : M1=%d M2=%d M3=%d M4=%d\n", sensMoteur[0], sensMoteur[1], sensMoteur[2], sensMoteur[3]);
   Serial.println("Commandes serie : t = test des roues (robot souleve), f = avance 1 s, x = arret, i = chercher la carte (I2C)");
@@ -635,6 +650,15 @@ void loop() {
   server.handleClient();
   webSocket.loop();
   commandeSerie();
+  testRouesSuivre();
+
+  // Carte moteur en mode I2C : initialisation 1 s après le démarrage (sans delay)
+  if (!carteInitFaite && modeMoteur != MODE_GPIO && millis() > 1000) {
+    carteInitFaite = true;
+    car->Stop();
+    if (cartePresente(car)) Serial.println("[4/4] La carte moteur repond (ACK)");
+    else Serial.println("[4/4] !! La carte moteur ne repond pas. Batteries ? Interrupteur de la carte ?");
+  }
 
   // Fin d'un essai de la page de test (3 s sans nouvel ordre, ou durée demandée écoulée)
   if (essaiManuel && (int32_t)(millis() - essaiFinMs) >= 0) {
