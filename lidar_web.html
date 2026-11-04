@@ -429,6 +429,8 @@
               <div class="field"><label for="slamStraight">Auto : ligne droite maximale (cm)</label><input type="number" id="slamStraight" value="80" min="30" max="200" step="10"></div>
               <div class="field"><label for="slamAutoStep">Auto : pas latéral maximal (cm)</label><input type="number" id="slamAutoStep" value="40" min="15" max="80" step="5"></div>
               <div class="field"><label for="slamAutoR">Auto : marge autour du robot (cm)</label><input type="number" id="slamAutoR" value="25" min="15" max="50" step="1"></div>
+              <div class="field"><label for="slamDenoise">Filtre du bruit lidar (pics isolés, tremblement)</label><select id="slamDenoise"><option value="yes">Oui</option><option value="no">Non</option></select></div>
+              <div class="field"><label for="slamKalman">Filtre de Kalman (position)</label><select id="slamKalman"><option value="yes">Oui</option><option value="no">Non</option></select></div>
               <div class="field"><label for="slamHome">Auto : revenir à la base à la fin</label><select id="slamHome"><option value="yes">Oui</option><option value="no">Non</option></select></div>
               <div class="field"><label for="slamCover">Auto : écart entre points de vue (m, 0 = aucun)</label><input type="number" id="slamCover" value="2"  min="0" max="5" step="0.1"></div>
             </div>
@@ -4501,7 +4503,7 @@ function drawLocLayer(lay) {
 
 
 /* ================= SLAM automatique : pilotage + carte ================= */
-const slam = { auto: false, planNeeded: false, fresh: null, curPose: null, step: null, plan: null, target: null, lastOutcome: '', wrongDir: 0, still: 0, nofit: 0, skipRun: 0, arrivals: {}, banned: [], kv: { axis: 0.0028, diag: 0.002 }, kw: 0.7, run: null, runTimer: 0, nSteps: 0, startedAt: 0, lostRun: 0, on: false, busy: false, tr: null, timer: 0, kept: 0, skipped: 0, rejected: 0, dist: 0, last: null, lastRes: null, moves: 0, lastCap: 0, stack: [], bb: null, bbKey: '', resetAsk: 0 };
+const slam = { auto: false, planNeeded: false, fresh: null, curPose: null, step: null, plan: null, target: null, lastOutcome: '', wrongDir: 0, still: 0, nofit: 0, skipRun: 0, arrivals: {}, banned: [], kv: { axis: 0.0028, diag: 0.002 }, kw: 0.7, kf: null, dropped: 0, run: null, runTimer: 0, nSteps: 0, startedAt: 0, lostRun: 0, on: false, busy: false, tr: null, timer: 0, kept: 0, skipped: 0, rejected: 0, dist: 0, last: null, lastRes: null, moves: 0, lastCap: 0, stack: [], bb: null, bbKey: '', resetAsk: 0 };
 const slamNum = (id, d, lo, hi) => { const v = parseFloat($(id).value); return isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
 const slamLive = () => isLinked() || !!state.simTimer;
 const slamMoving = () => Date.now() < drive.busyUntil + slamNum('slamSettle', 700, 100, 5000);   // commande récente + temps de s'arrêter
@@ -4524,7 +4526,9 @@ function slamHud() {
     + `<span><b>${fmt(p.x, 2)} · ${fmt(p.y, 2)}</b>x · y (m)</span><span><b>${fmt(p.th, 1)}°</b>cap</span>`
     + (slamBase() ? `<span><b>${fmt(Math.hypot(p.x - slamBase().x, p.y - slamBase().y), 1)} m</b>de la base</span>` : '')
     + `<span><b>${slam.on ? (slamMoving() ? 'En route' : 'Immobile') : 'Arrêté'}</b>robot</span>`
-    + (slam.on ? `<span><b>${slam.auto ? 'Auto' : 'Manuel'}</b>mode</span>` : '');
+    + (slam.on ? `<span><b>${slam.auto ? 'Auto' : 'Manuel'}</b>mode</span>` : '')
+    + (slam.on && slamDenoiseOn() ? `<span><b>${slam.dropped || 0}</b>pics lidar retirés</span>` : '')
+    + (slam.on && slamKalmanOn() && slam.kf ? `<span><b>±${fmt(100 * Math.sqrt(slam.kf.px), 1)} cm</b>incertitude</span>` : '');
 }
 function slamUi() {
   const t = $('slamToggle');
@@ -4551,6 +4555,7 @@ function slamStart(auto = false) {
   const last = state.scans[state.scans.length - 1];
   slam.stack = [];
   if (last) { trackerStep(slam.tr, cleanOf(last), { ...last.pose }); slam.last = { ...last.pose }; } else slam.last = null;   // on continue à la suite du dernier scan
+  slam.kf = null; slam.dropped = 0; if (last) slamKalmanInit(last.pose);
   slam.on = true; slam.moves = drive.moves; slam.lastCap = Date.now(); slam.startedAt = Date.now(); slam.lostRun = 0;
   slam.auto = auto && driveReady(); slamPlanReset();
   slam.timer = setInterval(slamLoop, 150);
@@ -4586,6 +4591,53 @@ function slamLoop() {
   else if (trig === 'timer' && !moving && Date.now() - slam.lastCap > slamNum('slamEvery', 3, 1, 60) * 1000) slamCapture();
   else if (state.tab === 'slam') { $('hud').innerHTML = slamHud(); }
 }
+
+/* ---------- filtres (v26) ----------
+   1) Bruit du lidar : sur chaque scan pris par le SLAM, avant le recalage. Un point isolé (seul à sortir de la ligne tracée par ses deux voisins)
+      est retiré ; un point dont les voisins sont alignés avec lui est lissé (moyenne 1-2-1), ce qui enlève le tremblement de 1 à 2 cm sans arrondir les coins ni les pentes.
+      Le scan en direct qui sert à arrêter le robot n'est jamais filtré : un vrai obstacle fin ne doit pas être effacé.
+   2) Kalman : filtre la position (x, y, cap) en mélangeant la position prévue par la consigne (vitesses mesurées) et la position recalée sur le lidar,
+      chacune pondérée par son incertitude : un recalage « fiable » est suivi presque tel quel, un recalage « à vérifier » est tiré vers la position prévue. */
+const slamDenoiseOn = () => { const e = $('slamDenoise'); return !e || e.value !== 'no'; };
+const slamKalmanOn = () => { const e = $('slamKalman'); return !e || e.value !== 'no'; };
+function slamDenoise(scan) {
+  const n = scan.ranges.length, r = scan.ranges, a = scan.angles;
+  if (n < 5) return { scan, dropped: 0 };
+  const st = []; for (let i = 1; i < n; i++) st.push(Math.abs(a[i] - a[i - 1])); st.sort((p, q) => p - q);
+  const tol = x => 0.04 + 0.02 * x, GAP = 2.5 * st[n >> 1] + 1e-6;   // deux voisins sont « côte à côte » s'il n'y a pas de trou (le LD06 : 0,8° entre points)
+  const adj = i => i > 0 && i < n - 1 && r[i - 1] > 0.02 && r[i] > 0.02 && r[i + 1] > 0.02 && Math.abs(a[i] - a[i - 1]) < GAP && Math.abs(a[i + 1] - a[i]) < GAP;
+  const keep = new Uint8Array(n).fill(1), out = new Float64Array(r);
+  let dropped = 0;
+  for (let i = 1; i < n - 1; i++) {
+    if (!adj(i)) continue;
+    const t = tol(r[i]), u = r[i] - r[i - 1], v = r[i] - r[i + 1];
+    if (Math.abs(u) > t && Math.abs(v) > t && u * v > 0 && Math.abs(r[i - 1] - r[i + 1]) <= t) { keep[i] = 0; dropped++; continue; }   // pic isolé
+    if (Math.abs(r[i - 1] - 2 * r[i] + r[i + 1]) <= 0.5 * t) out[i] = 0.25 * r[i - 1] + 0.5 * r[i] + 0.25 * r[i + 1];                   // tremblement
+  }
+  let c = 0; for (let i = 0; i < n; i++) c += keep[i];
+  const o = { ...scan, angles: new Float64Array(c), ranges: new Float64Array(c), inten: new Float64Array(c) };
+  for (let i = 0, k = 0; i < n; i++) if (keep[i]) { o.angles[k] = a[i]; o.ranges[k] = out[i]; o.inten[k] = scan.inten ? scan.inten[i] : 0; k++; }
+  return { scan: o, dropped };
+}
+function slamKalmanInit(pose) { slam.kf = { x: pose.x, y: pose.y, th: pose.th, px: 1e-4, py: 1e-4, pth: 0.25 }; }
+function slamKalmanPredictedVar(st) {                           // incertitude ajoutée par le pas commandé (glissement des roues, vitesse mal connue)
+  if (!st) return { qxy: 0.35, qth: 20 };                       // mouvement inconnu (pilotage manuel) : on fait confiance au lidar
+  const d = (st.diag ? slam.kv.diag : slam.kv.axis) * st.pct * st.ms / 1000, rot = st.type === 'rot' ? slam.kw * st.pct * st.ms / 1000 : 0;
+  return { qxy: st.type === 'rot' ? 0.03 : 0.03 + 0.15 * d, qth: st.type === 'rot' ? 1 + 0.2 * rot : 1 + 1.5 * d };
+}
+function slamKalmanUpdate(res, st) {                            // renvoie la pose filtrée ; res = résultat du recalage lidar
+  const z = res.pose;
+  if (!slam.kf) { slamKalmanInit(z); return { ...z }; }
+  const f = slam.kf, q = slamKalmanPredictedVar(st), pr = st && slam.auto ? slamExpected(st) : null;
+  const xp = pr ? pr.x : f.x, yp = pr ? pr.y : f.y, tp = pr ? pr.th : f.th;
+  const Pxy = Math.max(f.px, f.py) + q.qxy * q.qxy, Pth = f.pth + q.qth * q.qth;       // variances (m², deg²)
+  const inl = Math.max(0.3, Math.min(1, res.inlierFrac || 0.5));
+  const sxy = res.verdict === 'bonne' ? 0.02 / inl : 0.25, sth = res.verdict === 'bonne' ? 0.8 / inl : 8;
+  const kxy = Pxy / (Pxy + sxy * sxy), kth = Pth / (Pth + sth * sth);
+  f.x = xp + kxy * (z.x - xp); f.y = yp + kxy * (z.y - yp); f.th = tp + kth * wrapDeg(z.th - tp);
+  f.px = f.py = (1 - kxy) * Pxy; f.pth = (1 - kth) * Pth;
+  return { x: f.x, y: f.y, th: wrapDeg(f.th) };
+}
 function slamExpected(st) {                                    // pose attendue après le pas commandé (consigne × vitesses calibrées) : aide le recalage
   if (!st || st.x0 === undefined) return undefined;
   const sec = st.ms / 1000;
@@ -4606,7 +4658,8 @@ async function slamCapture0() {
   if (!slam.on) { slam.busy = false; return ''; }
   if (!got) { slam.busy = false; slamSay('Aucun scan reçu du lidar : vérifie la connexion.', 'err'); slamUi(); return slam.auto ? 'aucun' : ''; }
   await nextPaint();
-  const scan = { ...got, pose: { x: 0, y: 0, th: 0 }, visible: true };
+  let dn = null; if (slamDenoiseOn()) { dn = slamDenoise(got); slam.dropped = (slam.dropped || 0) + dn.dropped; }
+  const scan = { ...(dn ? dn.scan : got), pose: { x: 0, y: 0, th: 0 }, visible: true };
   let res;
   try { res = trackerStep(slam.tr, cleanOf(scan), slam.auto ? slamExpected(slam.step) : undefined); }
   catch (e) { slam.busy = false; slamSay('Recalage impossible : ' + e.message, 'err'); slamUi(); return ''; }
@@ -4618,10 +4671,17 @@ async function slamCapture0() {
       slam.auto = false; slam.planNeeded = false; slam.step = null; slam.plan = null; slamSend('S');
       slamSay('Je suis perdu : 3 scans de suite sans position. Le robot est arrêté. Ramène-le près de la zone déjà cartographiée (ou annule le dernier scan), puis clique « Passer en automatique ».', 'err'); slamUi(); draw(); return '';
     }
+    if (slam.kf) { slam.kf.px = slam.kf.py = Math.max(slam.kf.px, 0.04); slam.kf.pth = Math.max(slam.kf.pth, 100); }
     slam.curPose = null; slam.nofit++;
     slamSay(slam.auto ? 'Position introuvable : scan ignoré, le robot revient sur ses pas.' : 'Position introuvable : scan ignoré. Avance moins, ou rapproche le robot de la zone déjà cartographiée.', 'err'); slamUi(); draw(); return 'echec';
   }
-  const pose = res.pose, p0 = slam.last;
+  let pose = res.pose;
+  if (slamKalmanOn() && (res.verdict === 'bonne' || res.verdict === 'douteuse' || first)) {
+    pose = first ? { ...res.pose } : slamKalmanUpdate(res, slam.step);
+    if (first) slamKalmanInit(pose);
+    const itl = slam.tr.items[slam.tr.items.length - 1]; if (itl && !first) itl.pose = { ...pose };   // le recalage suivant part de la pose filtrée
+  }
+  const p0 = slam.last;
   const d = !first && p0 ? Math.hypot(pose.x - p0.x, pose.y - p0.y) : 0;
   if (!first && p0 && res.verdict === 'bonne' && d * 100 < slamNum('slamMinMove', 3, 0, 50) && Math.abs(wrapDeg(pose.th - p0.th)) < 3) {
     slam.tr.items.pop(); slam.skipped++; slam.busy = false;       // le robot n'a (presque) pas bougé : rien de neuf
