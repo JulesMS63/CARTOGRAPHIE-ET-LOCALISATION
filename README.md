@@ -123,15 +123,22 @@ Le premier scan définit l'origine ; si des scans existent déjà, le SLAM conti
 le robot n'a presque pas bougé (« Garder si bougé de », 3 cm) est ignoré ; un recalage peu sûr est signalé. Boutons : **Scanner maintenant**, **Annuler le dernier scan**, **Recommencer**, **Voir la carte**.
 Autres déclencheurs (Réglages) : toutes les N secondes, ou seulement à la demande. Pendant le SLAM, la grille et la carte vectorielle ne sont refaites qu'en quittant l'onglet.
 
-#### Option : SLAM automatique (le robot explore seul, v22)
+#### Option : SLAM automatique piloté par le lidar (v22)
 
-Le pilotage manuel reste la façon de faire par défaut. En option, le bouton **SLAM automatique** (onglet SLAM, ou étape du menu) lance le SLAM **et** le pilotage automatique en même temps :
-le robot explore la pièce avec le capteur ultrason et le servo, et la page prend un scan à chaque arrêt de l'automate (le premier scan fixe l'origine). Il envoie `A,1,v,pause` au sketch,
-où `pause` (« Attente après l'arrêt » + 500 ms, 1200 ms par défaut) laisse le robot immobile avant le tour de lidar.
-Le bouton devient **Reprendre la main** ; le même effet s'obtient avec **Passer en automatique** pendant un SLAM manuel déjà commencé, ou avec une touche / un bouton du pavé.
-Arrêts automatiques (Réglages SLAM) : 60 scans (`slamMaxScans`), 10 minutes (`slamMaxMin`), 3 recalages ratés de suite (carte perdue), robot qui annonce `E,A,0,<code>`
-(`main` = reprise en main, `muet` = capteur sans réponse, `bloque` = 4 échecs de manœuvre de suite, `fin` = arrêt demandé), ou perte du lien Wi-Fi.
-Limites : testé en simulation et avec un faux lien seulement ; le comportement sur le vrai robot (sens du servo, seuils, vitesse, murs obliques ou mous) reste à valider, à vitesse faible et sous surveillance.
+Le pilotage manuel reste la façon de faire par défaut. En option, le bouton **SLAM automatique** (onglet SLAM, ou étape du menu) lance le SLAM et laisse la page conduire le robot **d'après le lidar** (le capteur ultrason n'intervient pas).
+La page décide, le sketch exécute : il suffit de la commande `P,vx,vy,w,v,ms` déjà présente (un pas, arrêté par l'ESP32 lui-même), rien à modifier ni à téléverser en plus.
+
+À chaque arrêt du robot (scan recalé sur la carte, comme en manuel) :
+1. une carte d'exploration (cases de 10 cm : inconnu, libre, obstacle) est refaite à partir de tous les scans placés ;
+2. la cible est la zone inconnue la plus proche par un chemin libre (frontière libre / inconnu, au moins 0,4 m de large) ; quand il n'en reste plus, un point de vue encore éloigné de tous les scans (réglage « écart entre points de vue », 2 m par défaut, 0 = aucun) pour voir derrière les meubles ;
+3. un pas d'au plus 40 cm est choisi parmi les 8 directions (avant, arrière, côtés, diagonales, avec les roues mecanum : le robot garde son cap) : celle qui rapproche le plus de la cible, à condition que le lidar mesure assez de place devant dans cette direction (marge de 25 cm entre le lidar et l'obstacle) ;
+4. la durée du pas est ajustée sur le déplacement réellement mesuré (les deux premiers pas sont courts, 0,25 s).
+
+Le trajet prévu (pointillés) et la cible s'affichent sur la carte. L'exploration s'arrête seule : plus de zone ni de point de vue à voir (« Exploration terminée »), 80 scans, 10 minutes, 3 recalages ratés de suite
+(le robot revient d'un pas, puis s'arrête s'il est perdu), 3 pas sans déplacement (robot coincé), lien Wi-Fi coupé, ou ordres incohérents avec ce que voit le lidar (avant ↔ arrière ou gauche ↔ droite inversés : lidar monté tourné, moteurs inversés).
+Une touche du pavé, le bouton ■ ou **Reprendre la main** rendent la main (le SLAM continue en manuel) ; **Passer en automatique** reprend l'exploration.
+Réglages (Réglages du SLAM) : pas maximal, marge autour du robot, écart entre points de vue, nombre de scans et durée maximale.
+Limites : le lidar voit à hauteur de son plan seulement (pas les pieds de table ni un obstacle plus bas) et le robot n'a pas de capteur de choc ; testé en simulation (salle de 6 × 4 m avec pilier et meuble, robot virtuel lent, normal et rapide, 0 collision) et avec un faux lien Wi-Fi, mais pas encore sur le vrai robot : premier essai à vitesse faible, sous surveillance.
 
 ### Pilotage automatique (capteur ultrason + servo)
 
