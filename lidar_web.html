@@ -5047,7 +5047,7 @@ function slamPlanStep() {
   slam.plan = { path, target: { x: tgt.x, y: tgt.y, kind: tgt.kind } };
   const what = `${tgt.kind === 'path' ? `vers le point ${slam.traj.idx + 1} sur ${slam.traj.pts.length} du trajet` : tgt.kind === 'front' ? 'vers une zone inconnue' : tgt.kind === 'home' ? 'retour à la base' : 'vers un nouveau point de vue'}, à ${fmt(ds * AGC, 1)} m`;
   let nearest = 3; for (let i = 0; i < fresh.ranges.length; i++) if (fresh.ranges[i] >= 0.12 && fresh.ranges[i] < nearest) nearest = fresh.ranges[i];
-  const tight = nearest < cfg.infl + 0.4;                      // zone resserrée : un obstacle à moins de 65 cm tout autour
+  const tight = nearest < cfg.infl + 0.12;                     // zone vraiment resserrée (obstacle à moins de ~37 cm tout autour) : pas latéraux ; ailleurs, rotation puis ligne droite sur 4 roues
   if (!tight && !slam.noRot) {
     const wp = slamPathAhead(G, dt, start, tgt.i, 0.8), delta = wrapDeg(Math.atan2(G.cy(wp) - cur.y, G.cx(wp) - cur.x) / D2R - cur.th);
     if (Math.abs(delta) > 15) {                                // d'abord on se tourne vers la destination
@@ -5066,16 +5066,20 @@ function slamPlanStep() {
   const segOk = (x, y, ang, d) => { for (let t = 0.05; t <= d + 1e-9; t += 0.05) { const c = G.at(x + Math.cos(ang) * t, y + Math.sin(ang) * t); if (c < 0 || G.g[c] !== 1 || (G.blk[c] && !G.near[c])) return false; } return true; };
   let best = null;
   const lens = [Math.min(dmax, Math.max(0.1, ds * AGC)), dmax, dmax * 0.75, dmax * 0.5, dmax * 0.3];
-  for (let k = 0; k < 8; k++) {
-    const ang = (th + k * 45) * D2R;
-    for (const d of lens) {
-      if (d < 0.1 - 1e-9 || d > clear[k] - cfg.infl) continue;
-      const x = cur.x + Math.cos(ang) * d, y = cur.y + Math.sin(ang) * d, c = G.at(x, y);
-      if (c < 0 || dt[c] >= 1e8 || !segOk(cur.x, cur.y, ang, d)) continue;
-      const left = dt[c] * AGC;
-      if (left > ds * AGC - 0.03) continue;                    // il faut se rapprocher de la cible
-      if (!best || left < best.left - 1e-9 || (Math.abs(left - best.left) < 1e-9 && d > best.d)) best = { k, d, left };
+  // 4 roues d'abord : avant, arrière, gauche, droite ; une diagonale (2 roues seulement, moins franche) n'est essayée que si aucun de ces 4 pas ne convient
+  for (const ks of [[0, 2, 4, 6], [1, 3, 5, 7]]) {
+    for (const k of ks) {
+      const ang = (th + k * 45) * D2R;
+      for (const d of lens) {
+        if (d < 0.1 - 1e-9 || d > clear[k] - cfg.infl) continue;
+        const x = cur.x + Math.cos(ang) * d, y = cur.y + Math.sin(ang) * d, c = G.at(x, y);
+        if (c < 0 || dt[c] >= 1e8 || !segOk(cur.x, cur.y, ang, d)) continue;
+        const left = dt[c] * AGC;
+        if (left > ds * AGC - 0.03) continue;                  // il faut se rapprocher de la cible
+        if (!best || left < best.left - 1e-9 || (Math.abs(left - best.left) < 1e-9 && d > best.d)) best = { k, d, left };
+      }
     }
+    if (best) break;
   }
   let vx, vy, w = 0, ms, d, label;
   if (best) {
@@ -5087,7 +5091,8 @@ function slamPlanStep() {
   } else {                                                      // aucun pas ne rapproche : on s'écarte de l'obstacle, sinon on tourne un peu
     slam.stuck++;
     if (slam.stuck > 4) { slamAutoStop('Le robot est bloqué : aucun déplacement possible vers une zone libre. Dégage-le puis relance (« Passer en automatique » ou « Suivre le trajet »).', 'warn'); return; }
-    let kb = 0; for (let k = 1; k < 8; k++) if (clear[k] > clear[kb]) kb = k;
+    let kb = 0; for (let k = 2; k < 8; k += 2) if (clear[k] > clear[kb]) kb = k;        // 4 roues : avant, gauche, arrière, droite
+    if (clear[kb] - cfg.infl < 0.08) for (let k = 1; k < 8; k += 2) if (clear[k] > clear[kb]) kb = k;   // sinon une diagonale
     const room = clear[kb] - cfg.infl;
     if (room >= 0.08) {
       d = Math.min(0.15, room); vx = Math.round(Math.cos(kb * Math.PI / 4)); vy = Math.round(Math.sin(kb * Math.PI / 4));
@@ -5181,12 +5186,13 @@ function slamTrajTarget(G, dist, cur) {                        // prochain point
           const a = cx0 + dx, b = cy0 + dy; if (a < 0 || b < 0 || a >= G.nx || b >= G.ny) continue;
           const j = b * G.nx + a, d = dx * dx + dy * dy; if (okc(j) && dist[j] < 1e8 && d < bd) { bd = d; cell = j; }
         }
-        if (cell >= 0) { best = i0; kind = 'near'; }
+        if (cell >= 0 && i0 === n - 1) { best = i0; kind = 'near'; }   // seul le dernier point est approché au plus près ; un point intermédiaire dans un obstacle est sauté (le robot ne s'acharne pas devant)
+        else cell = -1;
       }
     }
     T.onSteps++;
     const tooLong = T.onSteps > 40;
-    if (cell < 0 || tooLong || (kind === 'near' && dist[cell] * AGC < 0.2)) {   // inaccessible (dans un meuble, derrière un mur) ou on tourne en rond : on saute ce point
+    if (cell < 0 || tooLong || (kind === 'near' && dist[cell] * AGC < 0.3)) {   // inaccessible (dans un meuble, derrière un mur) ou on tourne en rond : on saute ce point
       T.skipped++; T.idx = i0 + 1; T.onSteps = 0; slamSay(`Le point ${i0 + 1} du trajet est inaccessible : le robot passe au suivant.`, 'warn'); continue;
     }
     return { kind: 'path', i: cell, x: G.cx(cell), y: G.cy(cell), cost: dist[cell], size: 0, k: best };
