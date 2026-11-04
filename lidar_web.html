@@ -424,14 +424,15 @@
               <div class="field"><label for="slamN">Carte locale (scans)</label><input type="number" id="slamN" value="3" min="1" max="8" step="1"></div>
               <div class="field"><label for="slamRadius">Recherche autour (m)</label><input type="number" id="slamRadius" value="1" min="0.2" max="5" step="0.1"></div>
               <div class="field"><label for="slamMinMove">Garder si bougé de (cm)</label><input type="number" id="slamMinMove" value="3" min="0" max="50" step="1"></div>
-              <div class="field"><label for="slamMaxScans">Auto : s'arrêter après (scans)</label><input type="number" id="slamMaxScans" value="80" min="5" max="500" step="5"></div>
-              <div class="field"><label for="slamMaxMin">Auto : durée max (min)</label><input type="number" id="slamMaxMin" value="10" min="1" max="60" step="1"></div>
-              <div class="field"><label for="slamAutoStep">Auto : pas maximal (cm)</label><input type="number" id="slamAutoStep" value="40" min="15" max="80" step="5"></div>
+              <div class="field"><label for="slamMaxScans">Auto : s'arrêter après (scans)</label><input type="number" id="slamMaxScans" value="250" min="5" max="500" step="5"></div>
+              <div class="field"><label for="slamMaxMin">Auto : durée max (min)</label><input type="number" id="slamMaxMin" value="30" min="1" max="120" step="1"></div>
+              <div class="field"><label for="slamStraight">Auto : ligne droite maximale (cm)</label><input type="number" id="slamStraight" value="80" min="30" max="200" step="10"></div>
+              <div class="field"><label for="slamAutoStep">Auto : pas latéral maximal (cm)</label><input type="number" id="slamAutoStep" value="40" min="15" max="80" step="5"></div>
               <div class="field"><label for="slamAutoR">Auto : marge autour du robot (cm)</label><input type="number" id="slamAutoR" value="25" min="15" max="50" step="1"></div>
               <div class="field"><label for="slamHome">Auto : revenir à la base à la fin</label><select id="slamHome"><option value="yes">Oui</option><option value="no">Non</option></select></div>
               <div class="field"><label for="slamCover">Auto : écart entre points de vue (m, 0 = aucun)</label><input type="number" id="slamCover" value="2"  min="0" max="5" step="0.1"></div>
             </div>
-            <p class="hint">En automatique, la vitesse est celle du curseur du pavé et chaque pas est déplacé dans l'une des 8 directions (le robot garde son cap) ; la durée des pas s'ajuste sur le déplacement mesuré par le lidar. La marge est la distance gardée entre le lidar et les obstacles. Un scan pris alors que le robot n'a presque pas bougé (moins que « Garder si bougé ») est ignoré. « Carte locale » : nombre de derniers scans fiables servant de référence (1 = le scan précédent seul).</p>
+            <p class="hint">En automatique, la vitesse est celle du curseur du pavé. Le robot se tourne vers sa destination puis avance droit sur les 4 roues (le lidar l'arrête avant un obstacle) ; en zone resserrée il fait de petits pas dans les 8 directions sans se tourner. Les durées s'ajustent sur le déplacement mesuré par le lidar. La marge est la distance gardée entre le lidar et les obstacles. Un scan pris alors que le robot n'a presque pas bougé (moins que « Garder si bougé ») est ignoré. « Carte locale » : nombre de derniers scans fiables servant de référence (1 = le scan précédent seul).</p>
           </details>
         </div></div></div>
       </section>
@@ -2837,7 +2838,7 @@ function ingest(rows) {
   }
   if (state.queue > 0) { captureScan(scan); state.queue--; }
   if (!$('optFreeze').checked) {
-    state.live = scan;
+    state.live = scan; state.liveAt = performance.now();
     state.liveSegs = $('optLiveSeg').checked ? segmentsOf(scan) : [];
     if (state.tab === 'live' || state.tab === 'slam') draw();
   }
@@ -4500,7 +4501,7 @@ function drawLocLayer(lay) {
 
 
 /* ================= SLAM automatique : pilotage + carte ================= */
-const slam = { auto: false, planNeeded: false, fresh: null, curPose: null, step: null, plan: null, target: null, lastOutcome: '', wrongDir: 0, still: 0, nofit: 0, skipRun: 0, arrivals: {}, banned: [], kv: { axis: 0.0028, diag: 0.002 }, nSteps: 0, startedAt: 0, lostRun: 0, on: false, busy: false, tr: null, timer: 0, kept: 0, skipped: 0, rejected: 0, dist: 0, last: null, lastRes: null, moves: 0, lastCap: 0, stack: [], bb: null, bbKey: '', resetAsk: 0 };
+const slam = { auto: false, planNeeded: false, fresh: null, curPose: null, step: null, plan: null, target: null, lastOutcome: '', wrongDir: 0, still: 0, nofit: 0, skipRun: 0, arrivals: {}, banned: [], kv: { axis: 0.0028, diag: 0.002 }, kw: 0.7, run: null, runTimer: 0, nSteps: 0, startedAt: 0, lostRun: 0, on: false, busy: false, tr: null, timer: 0, kept: 0, skipped: 0, rejected: 0, dist: 0, last: null, lastRes: null, moves: 0, lastCap: 0, stack: [], bb: null, bbKey: '', resetAsk: 0 };
 const slamNum = (id, d, lo, hi) => { const v = parseFloat($(id).value); return isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
 const slamLive = () => isLinked() || !!state.simTimer;
 const slamMoving = () => Date.now() < drive.busyUntil + slamNum('slamSettle', 700, 100, 5000);   // commande récente + temps de s'arrêter
@@ -4560,7 +4561,7 @@ function slamStart(auto = false) {
   if (!last || slam.auto) slamCapture();
 }
 function slamStop(msg, cls = '') {
-  clearInterval(slam.timer); slam.on = false; slam.auto = false; slam.planNeeded = false; slam.step = null; slam.plan = null;
+  clearInterval(slam.timer); slam.on = false; slam.auto = false; slam.planNeeded = false; slam.step = null; slam.plan = null; slam.run = null;
   if (state.ws && state.ws.readyState === 1) { try { state.ws.send('S'); } catch (_) { /* idem */ } }
   slamSay(msg || 'SLAM arrêté. La carte reste dans l’onglet Carte pour la retoucher ou l’exporter.', cls);
   slamUi(); draw();
@@ -4571,7 +4572,7 @@ function slamLoop() {
   if (slam.auto) {                                              // exploration autonome : limites choisies
     const mins = (Date.now() - slam.startedAt) / 60000;
     if (slam.homing && slam.homeSteps > 70) { slamStop('Je n’ai pas réussi à ramener le robot à sa base : ramène-le à la main. La carte est dans l’onglet Carte.', 'warn'); return; }
-    if (!slam.homing && (slam.kept >= slamNum('slamMaxScans', 80, 5, 500) || mins >= slamNum('slamMaxMin', 10, 1, 60))) {
+    if (!slam.homing && (slam.kept >= slamNum('slamMaxScans', 250, 5, 500) || mins >= slamNum('slamMaxMin', 30, 1, 120))) {
       const n = state.scans.length, p = slam.curPose || slam.last, b = slamBase();
       if (slamHomeWanted() && p && Math.hypot(p.x - b.x, p.y - b.y) > 0.3) {     // limite atteinte : on rentre d'abord
         slam.homing = true; slam.homeSteps = 0; slamSay(`Limite atteinte (${plural(n, 'scan', 'scans')}, ${fmt(mins, 1)} min) : le robot rentre à sa base.`, 'ok'); return;
@@ -4584,6 +4585,13 @@ function slamLoop() {
   if (trig === 'stop' && drive.moves !== slam.moves && !moving) slamCapture();
   else if (trig === 'timer' && !moving && Date.now() - slam.lastCap > slamNum('slamEvery', 3, 1, 60) * 1000) slamCapture();
   else if (state.tab === 'slam') { $('hud').innerHTML = slamHud(); }
+}
+function slamExpected(st) {                                    // pose attendue après le pas commandé (consigne × vitesses calibrées) : aide le recalage
+  if (!st || st.x0 === undefined) return undefined;
+  const sec = st.ms / 1000;
+  if (st.type === 'rot') return { x: st.x0, y: st.y0, th: st.th0 + Math.sign(st.w) * slam.kw * st.pct * sec };
+  const d = (st.diag ? slam.kv.diag : slam.kv.axis) * st.pct * sec, a = st.th0 * D2R, c = Math.cos(a), s = Math.sin(a);
+  return { x: st.x0 + d * (c * st.cx - s * st.cy), y: st.y0 + d * (s * st.cx + c * st.cy), th: st.th0 };
 }
 async function slamCapture() {
   if (!slam.on || slam.busy) return;
@@ -4600,7 +4608,7 @@ async function slamCapture0() {
   await nextPaint();
   const scan = { ...got, pose: { x: 0, y: 0, th: 0 }, visible: true };
   let res;
-  try { res = trackerStep(slam.tr, cleanOf(scan)); }
+  try { res = trackerStep(slam.tr, cleanOf(scan), slam.auto ? slamExpected(slam.step) : undefined); }
   catch (e) { slam.busy = false; slamSay('Recalage impossible : ' + e.message, 'err'); slamUi(); return ''; }
   slam.lastRes = res; slam.fresh = cleanOf(scan);
   const first = res.verdict === 'base';
@@ -4676,7 +4684,7 @@ function slamPlanReset() {
     wrongDir: 0, still: 0, nofit: 0, stuck: 0, arrivals: {}, banned: [], nSteps: 0, homing: false, homeSteps: 0 });
 }
 const slamHomeWanted = () => $('slamHome').value !== 'no' && !!slamBase();
-const slamAutoNums = () => ({ step: slamNum('slamAutoStep', 40, 15, 80) / 100, infl: slamNum('slamAutoR', 25, 15, 50) / 100, cover: slamNum('slamCover', 2, 0, 5) });
+const slamAutoNums = () => ({ straight: slamNum('slamStraight', 80, 30, 200) / 100, step: slamNum('slamAutoStep', 40, 15, 80) / 100, infl: slamNum('slamAutoR', 25, 15, 50) / 100, cover: slamNum('slamCover', 2, 0, 5) });
 function slamBuildGrid(infl) {
   const sc = state.scans.filter(s => s.visible !== false);
   if (!sc.length) return null;
@@ -4793,7 +4801,7 @@ function slamPickTarget(G, dist, cur, cfg) {
   return best;
 }
 function slamAutoStop(msg, cls = 'warn') {                     // l'exploration s'arrête, le SLAM continue en manuel
-  slam.auto = false; slam.planNeeded = false; slam.step = null; slam.plan = null; slamSend('S');
+  slam.auto = false; slam.planNeeded = false; slam.step = null; slam.plan = null; slam.run = null; slamSend('S');
   slamSay(msg, cls); slamUi(); draw();
 }
 function slamTakeOver() {                                      // une touche du pavé : l'utilisateur reprend la main
@@ -4803,7 +4811,14 @@ function slamTakeOver() {                                      // une touche du 
 }
 function slamStepFeedback(pose) {                              // le robot a bougé : on compare à ce qui était demandé
   const st = slam.step; if (!st) return; slam.step = null;
-  if (st.type !== 'move') { slam.still = 0; return; }
+  if (st.type === 'rot') {                                     // rotation sur place : on compare au sens demandé et on règle la vitesse de rotation
+    const dth = wrapDeg(pose.th - st.th0), sgn = st.vx === 0 && st.vy === 0 ? st.w : 0;
+    if (Math.abs(dth) < 2) { slam.still++; slam.kw = Math.max(0.1, slam.kw * 0.75); return; }
+    slam.still = 0;
+    if (Math.abs(dth) > 3) slam.kw = Math.min(6, Math.max(0.1, 0.6 * slam.kw + 0.4 * Math.abs(dth) / (st.ms / 1000) / st.pct));
+    if (st.want) { if (dth * sgn < -2) slam.wrongDir++; else if (dth * sgn > 5) slam.wrongDir = 0; }
+    return;
+  }
   const dx = pose.x - st.x0, dy = pose.y - st.y0, m = Math.hypot(dx, dy), c = Math.cos(-st.th0 * D2R), s = Math.sin(-st.th0 * D2R);
   const mx = c * dx - s * dy, my = s * dx + c * dy;           // déplacement mesuré, dans le repère du robot au départ du pas
   if (m < 0.02) { slam.still++; const key = st.diag ? 'diag' : 'axis'; slam.kv[key] = Math.max(0.0008, slam.kv[key] * 0.75); return; }   // il n'a pas bougé : on suppose le robot plus lent, le pas suivant sera plus long
@@ -4817,9 +4832,65 @@ function slamSendStep(vx, vy, w, ms, info) {
   drive.busyUntil = Date.now() + ms + 150; drive.moves++;
   $('drvState').textContent = 'Auto : ' + driveLabel([vx, vy, w]).toLowerCase();
   const cur = slam.curPose || slamPose();
-  slam.step = { x0: cur.x, y0: cur.y, th0: cur.th, ms, pct, type: w ? 'rot' : 'move', vx, vy, diag: !!(vx && vy), cx: 0, cy: 0, ...info };
-  if (!w && !(info && info.undo)) { const L = Math.hypot(vx, vy); slam.step.cx = vx / L; slam.step.cy = vy / L; slam.lastMove = { ...slam.step, undone: false }; }
+  slam.step = { x0: cur.x, y0: cur.y, th0: cur.th, ms, pct, type: w ? 'rot' : 'move', vx, vy, w, diag: !!(vx && vy), cx: 0, cy: 0, ...info };
+  if (!w) { const L = Math.hypot(vx, vy); slam.step.cx = vx / L; slam.step.cy = vy / L; }
+  if (!(info && info.undo)) slam.lastMove = { ...slam.step, undone: false };
   return true;
+}
+/* ---------- conduite « voiture » : on se tourne vers la destination puis on avance droit sur les 4 roues ----------
+   Le déplacement en ligne droite est un flux d'ordres D (toutes les 50 ms) que la page arrête à la distance voulue, ou plus tôt si le lidar voit
+   un obstacle pendant le trajet ; le sketch coupe de lui-même si les ordres cessent. Les pas latéraux / en diagonale ne servent qu'en zone resserrée. */
+function slamPathAhead(G, dt, start, tgtI, len) {              // point du chemin prévu situé à `len` m (ou la cible)
+  let ci = start, acc = 0, guard = 0;
+  while (ci !== tgtI && acc < len && guard++ < 600) {
+    const a = ci % G.nx, b = (ci - a) / G.nx; let bi = ci, bd = dt[ci];
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const aa = a + dx, bb = b + dy; if (aa < 0 || bb < 0 || aa >= G.nx || bb >= G.ny) continue; const j = bb * G.nx + aa; if (dt[j] < bd) { bd = dt[j]; bi = j; } }
+    if (bi === ci) break; acc += Math.hypot(G.cx(bi) - G.cx(ci), G.cy(bi) - G.cy(ci)); ci = bi;
+  }
+  return ci;
+}
+function slamStraightLen(G, dt, cur, ds, fresh, cfg) {          // plus longue ligne droite libre dans le cap actuel qui rapproche de la cible
+  const ang = cur.th * D2R, ahead = slamClearance(fresh, 0, cfg.infl * 0.85) - cfg.infl, dmax = Math.min(cfg.straight, ahead, ds * AGC + 0.15);
+  let best = 0;
+  for (let d = 0.05; d <= dmax + 1e-9; d += 0.05) {
+    const c = G.at(cur.x + Math.cos(ang) * d, cur.y + Math.sin(ang) * d);
+    if (c < 0 || G.g[c] !== 1 || (G.blk[c] && !G.near[c])) break;
+    if (dt[c] < 1e8 && dt[c] * AGC < ds * AGC - 0.6 * d) best = d;
+  }
+  return best;
+}
+function slamStartRun(L, cur, pct, cfg) {
+  const v = slam.kv.axis * pct, dur = Math.min(7000, Math.round(L / v * 1000));
+  slam.run = { t0: Date.now(), dur, pct, wc: cfg.infl * 0.85, stop: cfg.infl + 0.1 };
+  slam.step = { x0: cur.x, y0: cur.y, th0: cur.th, ms: dur, pct, type: 'move', vx: 1, vy: 0, w: 0, diag: false, cx: 1, cy: 0 };
+  slam.lastMove = { ...slam.step, undone: false };
+  slamSend(`D,1,0,0,${pct}`); drive.busyUntil = Date.now() + 250;
+  $('drvState').textContent = 'Auto : avance';
+  clearInterval(slam.runTimer); slam.runTimer = setInterval(slamRunTick, 50);
+}
+function slamRunEnd(why) {
+  clearInterval(slam.runTimer); const r = slam.run; slam.run = null; if (!r) return;
+  slamSend('S'); drive.busyUntil = Date.now() + 150; drive.moves++;       // arrêté : le scan suivant se déclenche
+  if (slam.step) { slam.step.ms = Math.max(60, Date.now() - r.t0); slam.lastMove.ms = slam.step.ms; }
+  if (why === 'obstacle') slamSay('Obstacle devant : le robot s’arrête avant.', 'warn');
+  else if (why === 'aveugle') slamSay('Plus de scan reçu du lidar pendant le trajet : le robot s’arrête.', 'warn');
+  else if (why === 'lien') slamAutoStop('Le lien Wi-Fi du robot est coupé : exploration arrêtée.', 'err');
+}
+function slamRunTick() {
+  const r = slam.run;
+  if (!r || !slam.on || !slam.auto) { clearInterval(slam.runTimer); slam.run = null; return; }
+  const now = Date.now(), el = now - r.t0;
+  let why = '';
+  if (!driveReady()) why = 'lien';
+  else {
+    const fresh = state.live && performance.now() - (state.liveAt || 0) < 1500;
+    if (!fresh) { if (el > 700) why = 'aveugle'; }
+    else if (slamClearance(cleanOf(state.live), 0, r.wc) < r.stop) why = 'obstacle';
+    if (!why && el >= r.dur) why = 'fin';
+  }
+  if (why) { slamRunEnd(why); return; }
+  if ((state.ws.bufferedAmount || 0) < 2048) slamSend(`D,1,0,0,${r.pct}`);
+  drive.busyUntil = now + 250;
 }
 function slamPlanStep() {
   if (!slam.on || !slam.auto) return;
@@ -4830,7 +4901,7 @@ function slamPlanStep() {
   const cfg = slamAutoNums(), pct = driveSpeed();
   if (slam.lastOutcome === 'echec') {                          // position perdue : on revient d'un pas vers la zone connue
     const lm = slam.lastMove;
-    if (lm && !lm.undone) { lm.undone = true; slamSendStep(-lm.vx, -lm.vy, 0, lm.ms, { undo: true }); slamSay('Position perdue : le robot revient sur ses pas.', 'warn'); return; }
+    if (lm && !lm.undone) { lm.undone = true; slamSendStep(-lm.vx, -lm.vy, -(lm.w || 0), Math.min(1000, lm.ms), { undo: true }); slamSay('Position perdue : le robot revient sur ses pas.', 'warn'); return; }
     slamAutoStop('Position perdue et retour impossible. Ramène le robot près de la zone déjà cartographiée, puis clique « Passer en automatique ».', 'err'); return;
   }
   const cur = slam.curPose || slam.last, fresh = slam.fresh;
@@ -4884,6 +4955,30 @@ function slamPlanStep() {
   const dt = slamDijkstra(G, tgt.i), ds = dt[start];
   const dmax = Math.min(cfg.step, slam.nSteps <= 2 ? 0.2 : cfg.step);
   const wc = cfg.infl * 0.85, th = cur.th;
+  const path = [[cur.x, cur.y]]; let ci0 = start, guard0 = 0;   // chemin prévu (descente du coût), pour l'affichage
+  while (ci0 !== tgt.i && guard0++ < 500) {
+    const a = ci0 % G.nx, b = (ci0 - a) / G.nx; let bi = ci0, bd = dt[ci0];
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const aa = a + dx, bb = b + dy; if (aa < 0 || bb < 0 || aa >= G.nx || bb >= G.ny) continue; const j = bb * G.nx + aa; if (dt[j] < bd) { bd = dt[j]; bi = j; } }
+    if (bi === ci0) break; ci0 = bi; path.push([G.cx(ci0), G.cy(ci0)]);
+  }
+  slam.plan = { path, target: { x: tgt.x, y: tgt.y, kind: tgt.kind } };
+  const what = `${tgt.kind === 'front' ? 'vers une zone inconnue' : tgt.kind === 'home' ? 'retour à la base' : 'vers un nouveau point de vue'}, à ${fmt(ds * AGC, 1)} m`;
+  let nearest = 3; for (let i = 0; i < fresh.ranges.length; i++) if (fresh.ranges[i] >= 0.12 && fresh.ranges[i] < nearest) nearest = fresh.ranges[i];
+  const tight = nearest < cfg.infl + 0.4;                      // zone resserrée : un obstacle à moins de 65 cm tout autour
+  if (!tight) {
+    const wp = slamPathAhead(G, dt, start, tgt.i, 0.8), delta = wrapDeg(Math.atan2(G.cy(wp) - cur.y, G.cx(wp) - cur.x) / D2R - cur.th);
+    if (Math.abs(delta) > 15) {                                // d'abord on se tourne vers la destination
+      const sgn = delta > 0 ? 1 : -1, deg = Math.min(Math.abs(delta), 35);
+      let ms = Math.round(Math.min(900, Math.max(100, deg / (slam.kw * pct) * 1000))); if (slam.nSteps <= 2) ms = Math.min(ms, 200);
+      slam.stuck = 0; slamSendStep(0, 0, sgn, ms, { want: sgn * deg });
+      slamSay(`Pas ${slam.nSteps} : il se tourne de ${Math.round(Math.abs(delta))}° ${sgn > 0 ? 'vers la gauche' : 'vers la droite'} (${what}).`, 'ok'); slamUi(); draw(); return;
+    }
+    let L = slamStraightLen(G, dt, cur, ds, fresh, cfg); if (slam.nSteps <= 2) L = Math.min(L, 0.2);
+    if (L >= 0.2) {                                            // puis tout droit, sur les 4 roues
+      slam.stuck = 0; slamStartRun(L, cur, pct, cfg);
+      slamSay(`Pas ${slam.nSteps} : tout droit sur ${fmt(L, 1)} m (${what}).`, 'ok'); slamUi(); draw(); return;
+    }
+  }
   const clear = []; for (let k = 0; k < 8; k++) clear.push(slamClearance(fresh, k * 45, wc));
   const segOk = (x, y, ang, d) => { for (let t = 0.05; t <= d + 1e-9; t += 0.05) { const c = G.at(x + Math.cos(ang) * t, y + Math.sin(ang) * t); if (c < 0 || G.g[c] !== 1 || (G.blk[c] && !G.near[c])) return false; } return true; };
   let best = null;
@@ -4921,14 +5016,7 @@ function slamPlanStep() {
       slamSendStep(0, 0, w, ms, {});
     }
   }
-  const path = [[cur.x, cur.y]]; let ci = start, guard = 0;   // chemin prévu (descente du coût), pour l'affichage
-  while (ci !== tgt.i && guard++ < 500) {
-    const a = ci % G.nx, b = (ci - a) / G.nx; let bi = ci, bd = dt[ci];
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const aa = a + dx, bb = b + dy; if (aa < 0 || bb < 0 || aa >= G.nx || bb >= G.ny) continue; const j = bb * G.nx + aa; if (dt[j] < bd) { bd = dt[j]; bi = j; } }
-    if (bi === ci) break; ci = bi; path.push([G.cx(ci), G.cy(ci)]);
-  }
-  slam.plan = { path, target: { x: tgt.x, y: tgt.y, kind: tgt.kind } };
-  slamSay(`Pas ${slam.nSteps} : ${label}.`, 'ok'); slamUi(); draw();
+  slamSay(`Pas ${slam.nSteps} : ${label}${tight ? ' (zone resserrée : pas latéraux)' : ''}.`, 'ok'); slamUi(); draw();
 }
 
 /* ---------- dessin de l'onglet SLAM ---------- */
