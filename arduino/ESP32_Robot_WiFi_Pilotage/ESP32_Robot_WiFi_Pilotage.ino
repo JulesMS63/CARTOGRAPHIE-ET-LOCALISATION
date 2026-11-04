@@ -29,8 +29,9 @@
 //   S               arrêt (freinage progressif, voir R)
 //   R,profil[,accel_ms[,frein_ms]]  profil de vitesse des roues : 0 = carré (aucune rampe), 1 = trapézoïdal (rampe linéaire), 2 = courbe en S (défaut) ;
 //                   accel_ms = durée de la montée (défaut 150), frein_ms = durée du freinage (défaut 100). Les arrêts de sécurité restent immédiats.
+//   G,1[,stop_cm[,angle]]  garde ultrason (v34) : le capteur balaie devant le robot pendant qu'il avance et le bloque sous stop_cm (25) ; G,0 la coupe. Voir plus bas.
 //   T,n             mesure de latence : le sketch répond E,T,n à cette page, la page calcule l'aller-retour
-//   Le sketch envoie aussi à la page : E,M (le robot bouge), E,R (il s'est arrêté), E,A,1 / E,A,0,raison (auto marche / arrêt), E,D,cm (distance devant),
+//   Le sketch envoie aussi à la page : E,M (le robot bouge), E,R (il s'est arrêté), E,A,1 / E,A,0,raison (auto marche / arrêt), E,D,cm (distance devant), E,O,angle,cm (la garde ultrason a vu un objet et arrêté le robot), E,G,cm (plus petite distance vue en balayant),
 //   à la connexion de la page : E,U,secondes (depuis combien de temps la carte tourne) et E,B,brownout|plantage|marche|autre (pourquoi elle a démarré)
 // La page répète D,... toutes les 100 ms tant qu'une touche est tenue.
 // Si plus rien n'arrive pendant 250 ms (touche relâchée, Wi-Fi coupé), le robot s'arrête : cet arrêt est aussi surveillé par un minuteur
@@ -361,7 +362,7 @@ void piloter(float vx, float vy, float w, int pct) {
 //   !! L'écho du HC-SR04 sort en 5 V alors que l'ESP32 supporte 3,3 V : mets un pont diviseur
 //      (1 kΩ entre ECHO et D22, 2 kΩ entre D22 et GND), sinon la broche s'abîme avec le temps.
 //   Servo 9 g : signal sur D26, alimenté en 5 V. Il porte le capteur : 90° = droit devant.
-// Utilisé uniquement par le pilotage automatique (commande « A » de la page, ou touche « a » au moniteur série).
+// Utilisé par le pilotage automatique (commande « A » de la page, ou touche « a » au moniteur série) et, depuis la v34, par la garde ultrason (commande « G », voir plus bas).
 // ============================================================================
 const uint8_t PIN_TRIG  = 23;
 const uint8_t PIN_ECHO  = 22;
@@ -393,13 +394,13 @@ const uint32_t TOURNE_MAX_MS = 3500;     // si le devant ne se dégage pas : il 
 #endif
 int servoAngle = -1;
 uint32_t servoPretMs = 0;
-void servoVers(int deg) {
+void servoVers(int deg, uint32_t attenteMs = SERVO_ATTENTE_MS) {
   deg = constrain(deg, 0, 180);
   if (deg == servoAngle) return;
   uint32_t us = 500 + (uint32_t)deg * 2000 / 180;          // 0° = 0,5 ms ... 180° = 2,5 ms
   SERVO_WRITE(us * 16384UL / 20000UL);
   servoAngle = deg;
-  servoPretMs = millis() + SERVO_ATTENTE_MS;
+  servoPretMs = millis() + attenteMs;
 }
 bool servoPret() { return (int32_t)(millis() - servoPretMs) >= 0; }
 
@@ -455,6 +456,7 @@ float distG = 400, distD = 400, distF = 400;    // distances relevées à gauche
 int autoEsquive = 0;                     // sens du glissement latéral (+1 gauche, -1 droite)
 int autoSens = 1;                        // sens du virage en cours (+1 gauche, -1 droite)
 int autoEchecs = 0;
+bool gardeActive = true;                 // garde ultrason (v34) : G,1 / G,0 (voir plus bas)
 
 void evenement(const char* e) { webSocket.broadcastTXT(e); }   // « E,... » : lu par la page, pas par le lidar
 bool autoActif() { return autoEtat != A_OFF; }
@@ -492,7 +494,7 @@ void autoDemarrer(int pct, int pauseMs) {
 
 // Appelée à chaque tour de loop() : ne bloque jamais
 void automate() {
-  ultrasonSuivre(autoActif() || millis() < mesureJusquaMs);
+  ultrasonSuivre(autoActif() || millis() < mesureJusquaMs || gardeActive);
   if (autoEtat == A_OFF) return;
   dernierOrdreMs = millis();             // l'automate est lui-même la source des ordres : le coupe-circuit de 300 ms ne s'applique pas
   uint32_t t = millis(), dt = t - autoDebutMs;
@@ -569,6 +571,89 @@ void automate() {
   }
 }
 
+// ============================================================================
+// Garde ultrason (v34) : en plus du lidar, le capteur HC-SR04 balaie devant le robot (servo) dès qu'il avance et le bloque devant un objet.
+//   - Actif pour les ordres de la page qui avancent (D et P : avant, diagonales avant, arc) ou glissent de côté, en pilotage manuel comme en SLAM auto : le balayage
+//     est centré sur la direction du mouvement (0° devant, ±90° de côté). Reculer et tourner sur place ne sont pas surveillés.
+//     Le pilotage automatique ultrason (commande A) a son propre balayage : la garde se met alors en veille.
+//   - Le servo oscille de ±GARDE_ANGLE autour de cette direction (centre, gauche, centre, droite) ; chaque position est mesurée une fois le servo arrivé (aucun delay()).
+//   - Objet sous gardeStopCm (2 mesures proches sur 3, ou une mesure sous gardeStopCm - 10) : arrêt immédiat des moteurs, l'avance (ou le glissement) des ordres
+//     suivants est ignorée tant que l'objet est là (reculer et tourner restent possibles), la tête fait « non » (balancement gauche-droite) et la page reçoit E,O,angle,cm.
+//   - Tourner (w) lève le blocage : le capteur est replacé sur le nouveau cap.
+//   - E,G,cm : plus petite distance vue pendant le dernier balayage (affichée par la page).
+//   Commande : G,1[,stop_cm[,angle_deg]] active (défaut 25 cm, 35°) ; G,0 coupe la garde (le robot n'est alors protégé que par le lidar).
+// ============================================================================
+const int GARDE_STOP_DEFAUT_CM = 25, GARDE_ANGLE_DEFAUT = 35, GARDE_NON_ANGLE = 25;
+const uint32_t GARDE_SERVO_MS = 110;     // un servo 9 g franchit ~35° en ~100 ms : assez pour mesurer
+int gardeStopCm = GARDE_STOP_DEFAUT_CM, gardeAngle = GARDE_ANGLE_DEFAUT;
+const int8_t GARDE_ORDRE[4] = {0, 1, 0, -1};         // centre, gauche, centre, droite : le devant est vu une fois sur deux
+uint8_t gardePos = 0, gardeHist = 0;
+bool gardeServoEnvoye = false, gardeRef = false;
+uint32_t gardeSeqRef = 0;
+float gardeMinCycle = 400;
+uint32_t gardeEnvoiMs = 0, gardeOMs = 0, avantVoluJusqua = 0, gardeBloqueJusqua = 0, nonProchainMs = 0, nonCooldownMs = 0;
+bool gardeBloque = false;
+int nonRestant = 0;
+int gardeDir = 0;                        // direction du mouvement demandé, en degrés (0 = devant, +90 = gauche)
+
+bool gardeBloqueActuel() { return gardeActive && gardeBloque && (int32_t)(gardeBloqueJusqua - millis()) > 0; }
+// Appelée pour chaque ordre D ou P de la page : retire la partie « avant » si un objet bloque, et prévient la garde qu'on veut avancer.
+void gardeFiltre(int& vx, int& vy, int w, uint32_t dureeMs) {
+  if (w != 0) { gardeBloque = false; gardeHist = 0; }
+  bool avance = vx > 0 || (vx == 0 && vy != 0);          // vers l'avant, en diagonale ou de côté : le capteur se tourne vers la direction du mouvement
+  if (avance && gardeActive) {
+    int dir = (int)lroundf(atan2f((float)vy, (float)vx) * 57.29578f);   // 0 = devant, +90 = gauche, -90 = droite
+    if (gardeBloque && abs(dir - gardeDir) > 45) { gardeBloque = false; gardeHist = 0; }   // on part dans une autre direction : le blocage ne vaut plus
+    gardeDir = dir;
+    avantVoluJusqua = millis() + dureeMs;
+    if (gardeBloqueActuel()) { vx = 0; vy = 0; }         // l'avance (ou le glissement) est ignorée ; tourner reste possible
+  } else avantVoluJusqua = 0;                            // reculer ou tourner sur place : la garde ne surveille plus
+}
+void gardeSuivre() {
+  uint32_t t = millis();
+  if (!gardeActive || autoActif()) {
+    gardeBloque = false; nonRestant = 0; gardeServoEnvoye = false; gardeRef = false; gardePos = 0; avantVoluJusqua = 0;
+    return;
+  }
+  if (nonRestant > 0) {                                // « non » de la tête
+    if ((int32_t)(t - nonProchainMs) >= 0) {
+      nonRestant--;
+      servoVers(nonRestant == 0 ? SERVO_CENTRE : SERVO_CENTRE + ((nonRestant & 1) ? 1 : -1) * GARDE_NON_ANGLE * SERVO_SENS_GAUCHE, 100);
+      nonProchainMs = t + 130;
+      if (nonRestant == 0) { gardeServoEnvoye = false; gardeRef = false; }
+    }
+    return;
+  }
+  bool veut = (int32_t)(avantVoluJusqua - t) > 0;
+  if (!veut) {                                         // pas d'avance demandée : le capteur regarde droit devant (mesure de départ toujours fraîche)
+    if (gardePos || gardeServoEnvoye) { servoVers(SERVO_CENTRE, GARDE_SERVO_MS); gardePos = 0; gardeServoEnvoye = false; gardeRef = false; }
+    return;
+  }
+  int ang = constrain(gardeDir + GARDE_ORDRE[gardePos] * gardeAngle, -90, 90);       // le balayage est centré sur la direction du mouvement
+  if (!gardeServoEnvoye) { servoVers(SERVO_CENTRE + ang * SERVO_SENS_GAUCHE, GARDE_SERVO_MS); gardeServoEnvoye = true; gardeRef = false; }
+  if (!gardeRef) { if (servoPret() && !mesureEnCours) { gardeRef = true; gardeSeqRef = mesureSeq; } return; }   // on attend une mesure déclenchée une fois le servo arrivé
+  if (mesureSeq == gardeSeqRef) return;
+  float cm = distBrute[(distIdx + 2) % 3];              // la dernière mesure
+  bool proche = cm >= 2 && cm < gardeStopCm;
+  gardeHist = ((gardeHist << 1) | (proche ? 1 : 0)) & 7;
+  gardeMinCycle = min(gardeMinCycle, cm);
+  gardeServoEnvoye = false; gardeRef = false;
+  if (proche && cm >= gardeStopCm - 10 && __builtin_popcount(gardeHist) < 2) { gardeServoEnvoye = true; return; }   // première mesure proche : on la confirme tout de suite, au même angle
+  if (proche) {
+    gardeBloque = true; gardeBloqueJusqua = t + 1200;
+    if (enMouvement()) { arreter(); evenement("E,R"); }
+    if (gardeOMs == 0 || t - gardeOMs > 500) { char m[32]; snprintf(m, sizeof(m), "E,O,%d,%d", ang, (int)cm); evenement(m); gardeOMs = t; Serial.printf("Garde ultrason : objet a %d cm (%d deg), le robot s'arrete\n", (int)cm, ang); }
+    if (nonCooldownMs == 0 || t - nonCooldownMs > 2500) { nonRestant = 7; nonProchainMs = t; nonCooldownMs = t; }
+    return;
+  }
+  gardePos = (gardePos + 1) & 3;
+  if (gardePos == 0) {                                  // un balayage complet est fait
+    if (gardeBloque && gardeMinCycle >= gardeStopCm + 5) gardeBloque = false;   // plus rien devant : on débloque tout de suite
+    if (t - gardeEnvoiMs > 700) { char m[24]; snprintf(m, sizeof(m), "E,G,%d", (int)gardeMinCycle); evenement(m); gardeEnvoiMs = t; }
+    gardeMinCycle = 400;
+  }
+}
+
 void traiterCommande(uint8_t num, uint8_t* payload, size_t length) {
   char buf[48];
   size_t n = length < sizeof(buf) - 1 ? length : sizeof(buf) - 1;
@@ -599,7 +684,18 @@ void traiterCommande(uint8_t num, uint8_t* payload, size_t length) {
     if (lus >= 3) {
       essaiManuel = false; pasEnCours = false;
       dernierOrdreMs = millis();
+      gardeFiltre(vx, vy, w, 350);                   // garde ultrason : l'avance est retirée si un objet bloque
       piloter(vx, vy, w * ECHELLE_ROTATION, pct);
+    }
+  } else if (buf[0] == 'G') {
+    // Garde ultrason : G,1[,stop_cm[,angle]]  ou  G,0
+    int on = 1, st = gardeStopCm, an = gardeAngle;
+    int lus = sscanf(buf, "G,%d,%d,%d", &on, &st, &an);
+    if (lus >= 1) {
+      gardeActive = on != 0;
+      gardeStopCm = constrain(st, 15, 60); gardeAngle = constrain(an, 15, 50);
+      if (!gardeActive) gardeBloque = false;
+      Serial.printf("Garde ultrason %s (stop %d cm, balayage +-%d deg)\n", gardeActive ? "active" : "coupee", gardeStopCm, gardeAngle);
     }
   } else if (buf[0] == 'A') {
     // Pilotage automatique : A,1[,vitesse%[,pause_ms]]  démarre ;  A,0  arrête
@@ -614,6 +710,7 @@ void traiterCommande(uint8_t num, uint8_t* payload, size_t length) {
     if (lus >= 3) {
       if (ms < 30) ms = 30;
       if (ms > 1000) ms = 1000;
+      gardeFiltre(vx, vy, w, (uint32_t)ms + 50);
       piloter(vx, vy, w * ECHELLE_ROTATION, pct);
       essaiManuel = true; pasEnCours = true;   // la boucle principale freine à la fin de la durée
       essaiFinMs = millis() + ms;
@@ -998,6 +1095,7 @@ void loop() {
   commandeSerie();
   testRouesSuivre();
   automate();
+  gardeSuivre();
 
   // Carte moteur en mode I2C : initialisation 1 s après le démarrage (sans delay)
   if (!carteInitFaite && modeMoteur != MODE_GPIO && millis() > 1000) {

@@ -214,6 +214,9 @@
   .drive .dspeed[hidden] { display: none; }
   .drive .dspeed input { width: 100%; min-width: 80px; margin: 0; }
   .drive .dspeed output { min-width: 38px; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
+  .drive .dus { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--ink); flex-wrap: wrap; }
+  .drive .dus label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .drive .dus input[type=number] { width: 4.6em; margin: 0 2px; }
   .drive .dstate { text-align: center; min-height: 16px; color: var(--ink); font-weight: 600; }
   .drive .dhint { max-width: 176px; line-height: 1.35; }
   .drive .dlat { text-align: center; max-width: 176px; font-size: 11px; color: var(--muted); } .drive .dlat.warn { color: var(--warn); } .drive .dlat.bad { color: var(--bad); font-weight: 600; }
@@ -432,6 +435,7 @@
               <div class="field"><label for="slamMaxScans">Auto : s'arrêter après (scans)</label><input type="number" id="slamMaxScans" value="250" min="5" max="500" step="5"></div>
               <div class="field"><label for="slamMaxMin">Auto : durée max (min)</label><input type="number" id="slamMaxMin" value="30" min="1" max="120" step="1"></div>
               <div class="field"><label for="slamStraight">Auto : ligne droite maximale (cm)</label><input type="number" id="slamStraight" value="50" min="30" max="200" step="10"></div>
+              <div class="field"><label for="slamUsOff">Capteur ultrason : distance devant le lidar (cm)</label><input type="number" id="slamUsOff" value="10" min="0" max="40" step="1"></div>
               <div class="field"><label for="slamKnown">Auto : ligne droite en zone déjà cartographiée (cm, 0 = comme ci-dessus)</label><input type="number" id="slamKnown" value="150" min="0" max="300" step="10"></div>
               <div class="field"><label for="slamAutoStep">Auto : pas latéral maximal (cm)</label><input type="number" id="slamAutoStep" value="40" min="15" max="80" step="5"></div>
               <div class="field"><label for="slamAutoR">Auto : marge autour du robot (cm)</label><input type="number" id="slamAutoR" value="25" min="15" max="50" step="1"></div>
@@ -819,6 +823,8 @@
       <button type="button" class="btn sm" id="drvAuto" aria-pressed="false" title="Le robot avance seul avec son capteur ultrason monté sur servo : il s'arrête devant un obstacle, regarde à gauche et à droite, puis tourne vers le côté dégagé. Une touche ou un bouton du pavé reprend la main.">Pilotage automatique</button>
       <div class="dstate" id="drvState" aria-live="polite">Arrêt</div>
       <div class="dlat" id="drvLat" hidden></div>
+      <div class="dlat" id="drvUs" hidden></div>
+      <div class="dus" title="Le capteur ultrason balaie devant le robot (servo) pendant qu'il avance, et le bloque devant un objet : il s'arrête et fait « non » de la tête. Complète le lidar, qui ne voit pas un pied de table ou un objet bas."><label><input type="checkbox" id="usGuard" checked> Garde ultrason</label><span>stop sous <input type="number" id="usStop" value="25" min="15" max="60" step="5" aria-label="Distance d'arrêt en centimètres"> cm</span></div>
       <div class="dhint" id="drvHint">← → tourner · Maj + ← → décaler · Espace arrêt. Le robot s'arrête seul dès que la commande cesse. Une touche coupe le pilotage automatique.</div>
     </div>
     <div class="coords" id="footRight"></div>
@@ -2585,7 +2591,7 @@ function wsOpen(url, tries) {
   let opened = false;
   const giveUp = setTimeout(() => { if (!opened) { try { ws.close(); } catch (_) { /* déjà fermé */ } } }, 5000);
   ws.onopen = () => {
-    opened = true; clearTimeout(giveUp); wsStat.lastRx = Date.now();
+    opened = true; clearTimeout(giveUp); wsStat.lastRx = Date.now(); setTimeout(usSend, 400);   // réglages de la garde ultrason envoyés au robot
     const away = wsStat.downAt ? Math.round((Date.now() - wsStat.downAt) / 1000) : 0; wsStat.downAt = 0;
     setStatus('connStatus', tries ? `Reconnecté en Wi-Fi après ${away} s (coupure n° ${wsStat.drops}).` : 'Connecté en Wi-Fi. Attente du premier tour complet…', 'ok');
     if (tries && typeof slam !== 'undefined' && slam.on) slamSay('Liaison Wi-Fi revenue. Le robot est arrêté : clique « Passer en automatique » ou « Suivre le trajet » pour reprendre.', 'warn');
@@ -2646,6 +2652,15 @@ function wsEvent(t) {
     else if (rb && why === 'plantage') { setStatus('connStatus', 'Le sketch du robot a planté et redémarré. Regarde le moniteur série de l’ESP32 pour la cause.', 'err'); toast('Robot redémarré : plantage'); }
     else if (rb && why === 'marche') { setStatus('connStatus', 'La carte du robot a été éteinte puis rallumée (alimentation coupée : batterie, interrupteur ou câble).', 'warn'); }
   }
+  else if (p[1] === 'O') {                                                 // la garde ultrason a vu un objet et arrêté le robot : E,O,angle,cm
+    const ang = parseInt(p[2], 10), cm = parseInt(p[3], 10);
+    if (isFinite(ang) && isFinite(cm)) {
+      usShow(`Objet à ${cm} cm${ang ? (ang > 0 ? ' à gauche' : ' à droite') : ' devant'} : le robot s’arrête`, true);
+      if (typeof slamUsObstacle === 'function') slamUsObstacle(ang, cm);
+      if (typeof slam === 'undefined' || !slam.on) toast(`Objet à ${cm} cm : robot arrêté`);
+    }
+  }
+  else if (p[1] === 'G') { const cm = parseInt(p[2], 10); if (isFinite(cm)) usShow(cm >= 400 ? 'Garde ultrason : devant libre' : `Garde ultrason : devant libre jusqu’à ${cm} cm`, false); }
   else if (p[1] === 'D') { state.autoDist = parseInt(p[2], 10); if (state.auto && !drive.pad.some(Boolean) && !drive.keys.size) $('drvState').textContent = autoLabel(); }
 }
 /* Latence de la liaison : la page envoie T,n toutes les 1,5 s, le sketch répond E,T,n ; l'aller-retour montre le retard entre une touche et le robot */
@@ -2667,6 +2682,19 @@ setInterval(() => {
   setStatus('connStatus', 'Plus aucun message du robot depuis 5 s : la liaison est bloquée. Reconnexion…', 'warn');
   state.ws = null; wsOpen(wsStat.url, 1);
 }, 1000);
+/* Garde ultrason (v34) : case à cocher + distance d'arrêt dans le pavé, réglages envoyés au sketch (G,1,cm ou G,0) à la connexion et à chaque changement */
+let usTimer = 0;
+function usShow(txt, alert) {
+  const el = $('drvUs'); if (!el) return; el.hidden = !$('usGuard').checked; el.textContent = txt; el.className = 'dlat' + (alert ? ' bad' : '');
+  clearTimeout(usTimer); usTimer = setTimeout(() => { el.hidden = true; }, alert ? 4000 : 3000);
+}
+function usSend() {
+  if (!driveReady()) return;
+  const on = $('usGuard').checked, cm = Math.min(60, Math.max(15, parseInt($('usStop').value, 10) || 25));
+  try { state.ws.send(on ? `G,1,${cm}` : 'G,0'); } catch (_) { /* liaison coupée */ }
+  if (!on) $('drvUs').hidden = true;
+}
+$('usGuard').onchange = usSend; $('usStop').onchange = usSend;
 const autoLabel = () => 'Automatique' + (state.autoDist != null && isFinite(state.autoDist) ? ` · devant ${state.autoDist >= 400 ? '> 4 m' : state.autoDist + ' cm'}` : '');
 function updateAutoUi() {
   const b = $('drvAuto'); if (!b) return;
@@ -4537,7 +4565,7 @@ function drawLocLayer(lay) {
 
 
 /* ================= SLAM automatique : pilotage + carte ================= */
-const slam = { auto: false, planNeeded: false, fresh: null, curPose: null, step: null, plan: null, target: null, lastOutcome: '', wrongDir: 0, still: 0, nofit: 0, skipRun: 0, arrivals: {}, banned: [], kv: { axis: 0.0028, diag: 0.002 }, kw: 0.7, kf: null, dropped: 0, trajOn: false, traj: { pts: [], raw: [], stroke: false, drawMode: false, idx: 0, reached: 0, skipped: 0, onSteps: 0 }, run: null, runTimer: 0, nSteps: 0, startedAt: 0, lostRun: 0, on: false, busy: false, tr: null, timer: 0, kept: 0, skipped: 0, rejected: 0, dist: 0, last: null, lastRes: null, moves: 0, lastCap: 0, stack: [], bb: null, bbKey: '', resetAsk: 0 };
+const slam = { auto: false, planNeeded: false, fresh: null, curPose: null, step: null, plan: null, target: null, lastOutcome: '', wrongDir: 0, still: 0, nofit: 0, skipRun: 0, arrivals: {}, banned: [], kv: { axis: 0.0028, diag: 0.002 }, kw: 0.7, kf: null, dropped: 0, usPts: [], usHit: false, usPose: null, trajOn: false, traj: { pts: [], raw: [], stroke: false, drawMode: false, idx: 0, reached: 0, skipped: 0, onSteps: 0 }, run: null, runTimer: 0, nSteps: 0, startedAt: 0, lostRun: 0, on: false, busy: false, tr: null, timer: 0, kept: 0, skipped: 0, rejected: 0, dist: 0, last: null, lastRes: null, moves: 0, lastCap: 0, stack: [], bb: null, bbKey: '', resetAsk: 0 };
 const slamNum = (id, d, lo, hi) => { const v = parseFloat($(id).value); return isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
 const slamLive = () => isLinked() || !!state.simTimer;
 const slamMoving = () => Date.now() < drive.busyUntil + slamNum('slamSettle', 700, 100, 5000);   // commande récente + temps de s'arrêter
@@ -4769,7 +4797,7 @@ function slamReset() {
   if (slam.on) slamStop('SLAM arrêté.');
   state.scans = []; state.selected = -1; state.counters = {}; state.colorIdx = 0; state.base = null;
   flags.mapSeen = false; flags.gridSeen = false; flags.posed = false; flags.tuned = false; flags.exported = false;
-  slamPlanReset(); Object.assign(slam, { tr: null, kept: 0, skipped: 0, rejected: 0, dist: 0, last: null, lastRes: null, stack: [], bbKey: '' });
+  slam.usPts = []; slam.usPose = null; slamPlanReset(); Object.assign(slam, { tr: null, kept: 0, skipped: 0, rejected: 0, dist: 0, last: null, lastRes: null, stack: [], bbKey: '' });
   slamSay('Carte effacée.');
   renderScanList(); rebuild(); slamUi(); draw();
 }
@@ -4826,6 +4854,11 @@ function slamBuildGrid(infl) {
     }
     const c0 = at(px, py); if (c0 >= 0 && g[c0] !== 2) g[c0] = 1;
   });
+  for (const q of slamUsLive()) {                                  // objets vus par le capteur ultrason : une croix de cases occupées (même là où le lidar voit libre)
+    const c = at(q.x, q.y); if (c < 0) continue;
+    const a0 = c % nx, b0 = (c - a0) / nx;
+    for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) { const a = a0 + dx, b = b0 + dy; if (a >= 0 && b >= 0 && a < nx && b < ny) g[b * nx + a] = 2; }
+  }
   const blk = new Uint8Array(N), ri = Math.ceil(infl / AGC), kern = [];
   for (let dy = -ri; dy <= ri; dy++) for (let dx = -ri; dx <= ri; dx++) if (dx * dx + dy * dy <= ri * ri + 0.5) kern.push(dx, dy);
   for (let b = 0; b < ny; b++) for (let a = 0; a < nx; a++) if (g[b * nx + a] === 2)
@@ -4916,6 +4949,7 @@ function slamTakeOver() {                                      // une touche du 
 }
 function slamStepFeedback(pose) {                              // le robot a bougé : on compare à ce qui était demandé
   const st = slam.step; if (!st) return; slam.step = null;
+  const usStop = slam.usHit; slam.usHit = false;                 // arrêté par le capteur ultrason : ce n'est ni un robot coincé ni un mauvais réglage de vitesse
   if (st.type === 'rot') {                                     // rotation sur place : on compare au sens demandé et on règle la vitesse de rotation
     const dth = wrapDeg(pose.th - st.th0), sgn = st.vx === 0 && st.vy === 0 ? st.w : 0;
     if (Math.abs(dth) < 2) { slam.still++; slam.stillKind = 'rot'; slam.kw = Math.max(0.1, slam.kw * 0.55); return; }   // il n'a pas tourné : le pas suivant sera plus long
@@ -4926,6 +4960,7 @@ function slamStepFeedback(pose) {                              // le robot a bou
   }
   const dx = pose.x - st.x0, dy = pose.y - st.y0, m = Math.hypot(dx, dy), c = Math.cos(-st.th0 * D2R), s = Math.sin(-st.th0 * D2R);
   const mx = c * dx - s * dy, my = s * dx + c * dy;           // déplacement mesuré, dans le repère du robot au départ du pas
+  if (m < 0.02 && usStop) return;
   if (m < 0.02) { slam.still++; slam.stillKind = st.run ? 'run' : 'move'; const key = st.diag ? 'diag' : 'axis'; slam.kv[key] = Math.max(0.0008, slam.kv[key] * 0.75); return; }   // il n'a pas bougé : on suppose le robot plus lent, le pas suivant sera plus long
   slam.still = 0;
   if (m > 0.03) { const key = st.diag ? 'diag' : 'axis', kvn = m / (st.ms / 1000) / st.pct; slam.kv[key] = Math.min(0.012, Math.max(0.0008, 0.6 * slam.kv[key] + 0.4 * kvn)); }
@@ -4992,6 +5027,7 @@ function slamRunEnd(why) {
   slamSend('S'); drive.busyUntil = Date.now() + 150; drive.moves++;       // arrêté : le scan suivant se déclenche
   if (slam.step) { slam.step.ms = Math.max(60, Date.now() - r.t0); slam.lastMove.ms = slam.step.ms; }
   if (why === 'obstacle') slamSay('Obstacle devant : le robot s’arrête avant.', 'warn');
+  else if (why === 'us') slamSay('Objet détecté par le capteur ultrason devant le robot : il s’arrête (ajouté à la carte comme obstacle).', 'warn');
   else if (why === 'aveugle') slamSay('Plus de scan reçu du lidar pendant le trajet : le robot s’arrête.', 'warn');
   else if (why === 'lien') slamAutoStop('Le lien Wi-Fi du robot est coupé : exploration arrêtée.', 'err');
 }
@@ -5273,6 +5309,46 @@ function slamDrawTraj() {                                      // le trajet dess
   ctx.restore();
 }
 
+
+/* ---------- garde ultrason (v34) ----------
+   Le sketch balaie devant le robot avec le HC-SR04 (servo) pendant qu'il avance : sous 25 cm il coupe les moteurs, fait « non » de la tête et envoie E,O,angle,cm.
+   La page en fait un obstacle de la carte (le lidar ne voit pas un pied de table ou un objet bas) : le planificateur le contourne ensuite. */
+const US_KEEP_MS = 10 * 60 * 1000;                             // un point ultrason est oublié après 10 min (l'objet a pu être déplacé) ; « Recommencer » les efface aussi
+function slamLivePose() {                                      // position du robot maintenant : pendant une ligne droite, estimée d'après le temps roulé
+  const cur = slam.curPose || slam.last; if (!cur) return null;
+  if (slam.run && slam.step && slam.step.run) {
+    const d = Math.min(slam.kv.axis * slam.run.pct * (Date.now() - slam.run.t0) / 1000, 3), a = slam.step.th0 * D2R;
+    return { x: slam.step.x0 + Math.cos(a) * d, y: slam.step.y0 + Math.sin(a) * d, th: slam.step.th0 };
+  }
+  return cur;
+}
+function slamUsObstacle(angDeg, cm) {                          // le capteur a vu un objet à cm cm, angDeg ° à gauche (+) ou à droite (-) de l'axe
+  if (!slam.on) return;
+  const key = slam.nSteps + '|' + state.scans.length;                // le robot ne bouge plus après l'arrêt : les relances de la garde (même pas, même scan) se placent depuis la pose de l'arrêt, pas depuis le dernier scan
+  let p;
+  if (slam.usPose && slam.usPose.key === key) p = slam.usPose.p;
+  else { p = slamLivePose(); if (p) slam.usPose = { key, p: { x: p.x, y: p.y, th: p.th } }; }
+  if (!p) return;
+  const off = slamNum('slamUsOff', 10, 0, 40) / 100, a = angDeg * D2R, r = cm / 100;
+  const fx = off + r * Math.cos(a), fy = r * Math.sin(a), c = Math.cos(p.th * D2R), s = Math.sin(p.th * D2R);
+  slam.usPts.push({ x: p.x + c * fx - s * fy, y: p.y + s * fx + c * fy, at: Date.now() });
+  if (slam.usPts.length > 200) slam.usPts.shift();
+  slam.usHit = true;
+  if (slam.run) slamRunEnd('us');
+  draw();
+}
+function slamUsLive() { const t = Date.now() - US_KEEP_MS; slam.usPts = slam.usPts.filter(q => q.at > t); return slam.usPts; }
+function slamDrawUs() {
+  const pts = slamUsLive(); if (!pts.length) return;
+  ctx.save(); ctx.lineWidth = 2.5;
+  for (const q of pts) {
+    const [sx, sy] = w2s(q.x, q.y);
+    ctx.beginPath(); ctx.moveTo(sx, sy - 7); ctx.lineTo(sx + 7, sy); ctx.lineTo(sx, sy + 7); ctx.lineTo(sx - 7, sy); ctx.closePath();
+    ctx.fillStyle = 'rgba(156,54,181,.35)'; ctx.fill(); ctx.strokeStyle = '#9c36b5'; ctx.stroke();
+  }
+  ctx.restore();
+}
+
 /* ---------- dessin de l'onglet SLAM ---------- */
 function slamFit() {
   const v = state.view.slam;
@@ -5299,7 +5375,7 @@ function drawSlam() {
     drawRobot(0, 0, 0, css('--ink'), 11);
     ctx.save(); ctx.fillStyle = css('--muted'); ctx.font = '14px ' + css('--font'); ctx.textAlign = 'center';
     ctx.fillText(slam.on ? 'Premier scan en cours…' : 'Démarre le SLAM : un premier scan est pris, puis la carte se construit à chaque arrêt du robot.', W / 2, H - 70);
-    ctx.restore(); slamDrawTraj(); return;
+    ctx.restore(); slamDrawUs(); slamDrawTraj(); return;
   }
   const n = state.scans.length, grey = new Float32Array(2000).fill(0.5);          // carte en une seule teinte, le dernier scan en couleur
   state.scans.forEach((s, i) => { if (s.visible && i < n - 1) { const w = worldPoints(cleanOf(s), s.pose); drawPoints(w, css('--ink'), grey.length >= w.length / 2 ? grey : null, 1.7); } });
@@ -5316,7 +5392,7 @@ function drawSlam() {
   }
   const p = slamPose();
   if (state.live && !(slam.on && slamMoving())) drawPoints(worldPoints(cleanOf(state.live), p), css('--live'), null, 1.5);   // ce que le robot voit maintenant, quand il est arrêté
-  slamDrawTraj();
+  slamDrawUs(); slamDrawTraj();
   drawRobot(p.x, p.y, p.th, css('--ink'), 11);
 }
 
