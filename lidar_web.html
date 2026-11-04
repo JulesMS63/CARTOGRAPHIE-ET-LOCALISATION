@@ -200,6 +200,15 @@
   .drive .pad button.stop { color: #b42318; }
   .drive .pad button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
   .drive .dspeed { display: grid; grid-template-columns: 74px 1fr 46px; align-items: center; gap: 8px; }
+  #legacySteps { display: none !important; }
+  .slaminfo { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .slaminfo:empty { display: none; }
+  .slaminfo div { padding: 7px 8px; border: 1px solid var(--hair); border-radius: 8px; background: var(--canvas); font-size: 12px; color: var(--muted); }
+  .slaminfo b { display: block; font: 600 15px/1.2 var(--font-display); color: var(--ink); font-variant-numeric: tabular-nums; }
+  .slaminfo .wide { grid-column: 1 / -1; }
+  .slamopts > summary { cursor: pointer; font-size: 13px; color: var(--muted); margin: 2px 0 8px; }
+  .placereg { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--hair); border-radius: 10px; background: var(--canvas); }
+  .placereg .lab { font-weight: 600; font-size: 13px; color: var(--ink); }
   .drive .dopts { display: inline-flex; gap: 12px; }
   .drive .dspeed[hidden] { display: none; }
   .drive .dspeed input { width: 100%; min-width: 80px; margin: 0; }
@@ -377,9 +386,51 @@
       </section>
     </li>
 
-    <!-- 2. Capture -->
-    <li class="step" data-step="capture" data-state="todo" data-line="todo">
+    <!-- 2. SLAM automatique -->
+    <li class="step" data-step="slam" data-state="todo" data-line="todo">
       <div class="rail"><span class="node" aria-hidden="true"><span class="num">2</span>
+        <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
+      <section class="card">
+        <h2 class="step-h"><button type="button" class="head" aria-expanded="false" aria-controls="b-slam">
+          <span><span class="t">SLAM automatique</span><span class="s" data-summary></span></span>
+          <span class="chip" data-chip></span>
+          <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg>
+        </button></h2>
+        <div class="body" id="b-slam"><div class="inner"><div class="pad">
+          <p class="hint">Pilote le robot avec le pavé de l'onglet SLAM : à chaque arrêt, un scan est pris et placé tout seul sur la carte (recalage sur les derniers scans).</p>
+          <div class="row" style="align-items:center">
+            <button class="btn primary" id="slamToggle" type="button">Démarrer le SLAM</button>
+            <button class="btn sm" id="slamNow" type="button" title="Prend un scan tout de suite, sans attendre l'arrêt du robot">Scanner maintenant</button>
+          </div>
+          <div class="status" id="slamStatus" aria-live="polite"></div>
+          <div class="slaminfo" id="slamInfo" aria-live="polite"></div>
+          <div class="row">
+            <button class="btn sm" id="slamUndo" type="button" title="Retire le dernier scan et revient à la position d'avant">Annuler le dernier scan</button>
+            <button class="btn sm danger" id="slamReset" type="button">Recommencer</button>
+            <button class="btn sm" id="slamToMap" type="button" title="Ouvre la carte pour la retoucher ou l'exporter">Voir la carte</button>
+          </div>
+          <details class="slamopts">
+            <summary>Réglages</summary>
+            <div class="grid2">
+              <div class="field"><label for="slamTrig">Prendre un scan</label><select id="slamTrig">
+                <option value="stop">À chaque arrêt du robot</option>
+                <option value="timer">Toutes les … secondes</option>
+                <option value="manual">Seulement à la demande</option></select></div>
+              <div class="field"><label for="slamSettle">Attente après l'arrêt (ms)</label><input type="number" id="slamSettle" value="700" min="100" max="5000" step="100"></div>
+              <div class="field" id="slamEveryBox" hidden><label for="slamEvery">Période (s)</label><input type="number" id="slamEvery" value="3" min="1" max="60" step="1"></div>
+              <div class="field"><label for="slamN">Carte locale (scans)</label><input type="number" id="slamN" value="3" min="1" max="8" step="1"></div>
+              <div class="field"><label for="slamRadius">Recherche autour (m)</label><input type="number" id="slamRadius" value="1" min="0.2" max="5" step="0.1"></div>
+              <div class="field"><label for="slamMinMove">Garder si bougé de (cm)</label><input type="number" id="slamMinMove" value="3" min="0" max="50" step="1"></div>
+            </div>
+            <p class="hint">Un scan pris alors que le robot n'a presque pas bougé (moins que « Garder si bougé ») est ignoré. « Carte locale » : nombre de derniers scans fiables servant de référence (1 = le scan précédent seul).</p>
+          </details>
+        </div></div></div>
+      </section>
+    </li>
+
+    <!-- 3. Capture -->
+    <li class="step" data-step="capture" data-state="todo" data-line="todo">
+      <div class="rail"><span class="node" aria-hidden="true"><span class="num">3</span>
         <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
       <section class="card">
         <h2 class="step-h"><button type="button" class="head" aria-expanded="false" aria-controls="b-capture">
@@ -409,16 +460,16 @@
             <button id="btnCapture" class="btn primary" type="button">Capturer (Espace)</button>
             <label class="check"><input type="checkbox" id="optFreeze"> Figer l'affichage</label>
           </div>
-          <label class="check"><input type="checkbox" id="capAutoReg"> Placer chaque nouveau scan par recalage sur le scan précédent (réglages à l'étape 3)</label>
+          <label class="check"><input type="checkbox" id="capAutoReg"> Placer chaque nouveau scan par recalage sur le scan précédent (réglages : Localisation › Scan à scan)</label>
           <div class="status" id="capStatus" aria-live="polite"></div>
           <p class="hint">Le robot reste immobile pendant la capture. Origine : le repère du premier scan (0, 0, 0). Depuis le scan précédent : avant, gauche et rotation sont mesurés dans le repère du robot au scan précédent. La pose se corrige ensuite à l'étape 3.</p>
         </div></div></div>
       </section>
     </li>
 
-    <!-- 3. Placement -->
+    <!-- 4. Placement -->
     <li class="step" data-step="place" data-state="todo" data-line="todo">
-      <div class="rail"><span class="node" aria-hidden="true"><span class="num">3</span>
+      <div class="rail"><span class="node" aria-hidden="true"><span class="num">4</span>
         <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
       <section class="card">
         <h2 class="step-h"><button type="button" class="head" aria-expanded="false" aria-controls="b-place">
@@ -429,6 +480,16 @@
         <div class="body" id="b-place"><div class="inner"><div class="pad">
           <button class="btn" id="btnGoMap" type="button">Ouvrir l'onglet Carte</button>
           <div id="scanList"></div>
+          <div class="placereg">
+            <div class="lab">Recaler par rapport aux scans précédents</div>
+            <div class="row">
+              <button class="btn primary" id="btnPlacePrev" type="button" title="Cherche où se trouve le scan choisi (ou le dernier) en le comparant au scan juste avant lui">Recaler le scan choisi</button>
+              <button class="btn" id="btnPlaceAll" type="button" title="Du premier au dernier scan : chacun est recalé sur les précédents">Recaler tous à la suite</button>
+              <button class="btn sm" id="btnPlaceUndo" type="button" hidden>Annuler</button>
+            </div>
+            <div class="status" id="placeStatus" aria-live="polite"></div>
+            <p class="hint">Le scan choisi (clic dans la liste) est comparé au scan juste avant lui. Autres références et recherche « Partout » : Localisation › Scan à scan.</p>
+          </div>
           <div class="row">
             <button id="btnImport" class="btn sm" type="button">Importer des fichiers</button>
             <button id="btnClear" class="btn sm danger" type="button">Tout effacer</button>
@@ -439,61 +500,9 @@
       </section>
     </li>
 
-    <!-- 4. Cartes -->
-    <li class="step" data-step="maps" data-state="todo" data-line="todo">
-      <div class="rail"><span class="node" aria-hidden="true"><span class="num">4</span>
-        <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
-      <section class="card">
-        <h2 class="step-h"><button type="button" class="head" aria-expanded="false" aria-controls="b-maps">
-          <span><span class="t">Régler les cartes</span><span class="s" data-summary></span></span>
-          <span class="chip" data-chip></span>
-          <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg>
-        </button></h2>
-        <div class="body" id="b-maps"><div class="inner"><div class="pad">
-          <div class="grid2">
-            <div class="field"><label for="gridRes">Carreaux de la grille (mm)</label>
-              <input type="number" id="gridRes" value="50" step="1" min="10" max="500" inputmode="numeric"></div>
-            <div class="field"><label for="gridForget">Oubli par scan</label><input type="number" id="gridForget" value="1" min="0.5" max="1" step="0.01"></div>
-            <div class="field"><label for="angTol">Écart d'angle (°)</label><input type="number" id="angTol" value="10" step="1"></div>
-            <div class="field"><label for="distTol">Écart latéral (m)</label><input type="number" id="distTol" value="0.06" step="0.01"></div>
-            <div class="field"><label for="gapTol">Trou admis (m)</label><input type="number" id="gapTol" value="0.15" step="0.01"></div>
-            <div class="field"><label for="minWeight">Observations min.</label><input type="number" id="minWeight" value="1" step="1" min="1"></div>
-            <div class="field"><label for="fMinPts">Points min. par groupe</label><input type="number" id="fMinPts" value="8" step="1" min="1"></div>
-            <div class="field"><label for="fMinRange">Distance min. au capteur (m)</label><input type="number" id="fMinRange" value="0.20" step="0.01" min="0"></div>
-            <div class="field"><label for="fBreak">Écart max. entre voisins (m)</label><input type="number" id="fBreak" value="0.10" step="0.01" min="0.02"></div>
-            <div class="field"><label for="fConfTol">Tolérance de confirmation (m)</label><input type="number" id="fConfTol" value="0.10" step="0.01" min="0.02"></div>
-          </div>
-          <label class="check"><input type="checkbox" id="optConfirm"> Exiger un 2<sup>e</sup> scan : ignorer ce qu'un seul scan voit</label>
-          <p class="hint">Filtre des points isolés (case « Ignorer les points isolés » au-dessus de la vue) : un groupe de points voisins plus petit que « Points min. » est ignoré, comme tout point plus proche que la distance min. ; deux voisins plus écartés que « Écart max. » ne sont pas du même groupe. « Exiger un 2e scan » retire aussi ce qui n'apparaît que dans un seul scan (personnes, reflets) : à utiliser quand les scans sont bien placés. Les scans bruts sont conservés et <code>projet.json</code> reste brut.</p>
-          <label class="check"><input type="checkbox" id="autoBuild" checked> Recalculer à chaque changement</label>
-          <div class="row"><button id="btnBuild" class="btn" type="button">Recalculer les cartes</button></div>
-          <div class="status" id="mapStatus"></div>
-          <p class="hint">Cette étape est facultative : les valeurs par défaut fonctionnent pour une salle de classe.</p>
-        </div></div></div>
-      </section>
-    </li>
-
-    <!-- 5. Grille 2D -->
-    <li class="step" data-step="grid" data-state="todo" data-line="todo">
-      <div class="rail"><span class="node" aria-hidden="true"><span class="num">5</span>
-        <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
-      <section class="card">
-        <h2 class="step-h"><button type="button" class="head" aria-expanded="false" aria-controls="b-grid">
-          <span><span class="t">Grille d'occupation 2D</span><span class="s" data-summary></span></span>
-          <span class="chip" data-chip></span>
-          <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg>
-        </button></h2>
-        <div class="body" id="b-grid"><div class="inner"><div class="pad">
-          <button class="btn primary" id="btnGoGrid" type="button">Ouvrir la grille 2D</button>
-          <div id="gridStats" class="gstats"></div>
-          <p class="hint">Dans l'onglet Grille 2D, deux curseurs sous l'image : le premier fait glisser la séparation entre la grille <b>sans filtre</b> (à gauche) et <b>avec filtre</b> (à droite) ; le second règle la force du filtre (0 = désactivé). Un bon filtre fait disparaître les cellules occupées isolées (le tableau les compte) sans effacer les murs.</p>
-        </div></div></div>
-      </section>
-    </li>
-
-    <!-- 6. Localisation (Jour 2) -->
+    <!-- 5. Localisation -->
     <li class="step" data-step="loc" data-state="todo" data-line="todo">
-      <div class="rail"><span class="node" aria-hidden="true"><span class="num">6</span>
+      <div class="rail"><span class="node" aria-hidden="true"><span class="num">5</span>
         <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
       <section class="card">
         <h2 class="step-h"><button type="button" class="head" aria-expanded="false" aria-controls="b-loc">
@@ -647,9 +656,9 @@
         </div></div></div>
       </section>
     </li>
-    <!-- 7. Export -->
+    <!-- 6. Export -->
     <li class="step" data-step="export" data-state="todo" data-line="todo">
-      <div class="rail"><span class="node" aria-hidden="true"><span class="num">7</span>
+      <div class="rail"><span class="node" aria-hidden="true"><span class="num">6</span>
         <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
       <section class="card">
         <h2 class="step-h"><button type="button" class="head" aria-expanded="false" aria-controls="b-export">
@@ -670,12 +679,67 @@
       </section>
     </li>
   </ol>
+  <ol hidden id="legacySteps" aria-hidden="true">
+    <!-- 4. Cartes -->
+    <li class="step" data-step="maps" data-state="todo" data-line="todo">
+      <div class="rail"><span class="node" aria-hidden="true"><span class="num">4</span>
+        <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
+      <section class="card">
+        <h2 class="step-h"><button type="button" class="head" aria-expanded="false" aria-controls="b-maps">
+          <span><span class="t">Régler les cartes</span><span class="s" data-summary></span></span>
+          <span class="chip" data-chip></span>
+          <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg>
+        </button></h2>
+        <div class="body" id="b-maps"><div class="inner"><div class="pad">
+          <div class="grid2">
+            <div class="field"><label for="gridRes">Carreaux de la grille (mm)</label>
+              <input type="number" id="gridRes" value="50" step="1" min="10" max="500" inputmode="numeric"></div>
+            <div class="field"><label for="gridForget">Oubli par scan</label><input type="number" id="gridForget" value="1" min="0.5" max="1" step="0.01"></div>
+            <div class="field"><label for="angTol">Écart d'angle (°)</label><input type="number" id="angTol" value="10" step="1"></div>
+            <div class="field"><label for="distTol">Écart latéral (m)</label><input type="number" id="distTol" value="0.06" step="0.01"></div>
+            <div class="field"><label for="gapTol">Trou admis (m)</label><input type="number" id="gapTol" value="0.15" step="0.01"></div>
+            <div class="field"><label for="minWeight">Observations min.</label><input type="number" id="minWeight" value="1" step="1" min="1"></div>
+            <div class="field"><label for="fMinPts">Points min. par groupe</label><input type="number" id="fMinPts" value="8" step="1" min="1"></div>
+            <div class="field"><label for="fMinRange">Distance min. au capteur (m)</label><input type="number" id="fMinRange" value="0.20" step="0.01" min="0"></div>
+            <div class="field"><label for="fBreak">Écart max. entre voisins (m)</label><input type="number" id="fBreak" value="0.10" step="0.01" min="0.02"></div>
+            <div class="field"><label for="fConfTol">Tolérance de confirmation (m)</label><input type="number" id="fConfTol" value="0.10" step="0.01" min="0.02"></div>
+          </div>
+          <label class="check"><input type="checkbox" id="optConfirm"> Exiger un 2<sup>e</sup> scan : ignorer ce qu'un seul scan voit</label>
+          <p class="hint">Filtre des points isolés (case « Ignorer les points isolés » au-dessus de la vue) : un groupe de points voisins plus petit que « Points min. » est ignoré, comme tout point plus proche que la distance min. ; deux voisins plus écartés que « Écart max. » ne sont pas du même groupe. « Exiger un 2e scan » retire aussi ce qui n'apparaît que dans un seul scan (personnes, reflets) : à utiliser quand les scans sont bien placés. Les scans bruts sont conservés et <code>projet.json</code> reste brut.</p>
+          <label class="check"><input type="checkbox" id="autoBuild" checked> Recalculer à chaque changement</label>
+          <div class="row"><button id="btnBuild" class="btn" type="button">Recalculer les cartes</button></div>
+          <div class="status" id="mapStatus"></div>
+          <p class="hint">Cette étape est facultative : les valeurs par défaut fonctionnent pour une salle de classe.</p>
+        </div></div></div>
+      </section>
+    </li>
+
+    <!-- 5. Grille 2D -->
+    <li class="step" data-step="grid" data-state="todo" data-line="todo">
+      <div class="rail"><span class="node" aria-hidden="true"><span class="num">5</span>
+        <svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span></div>
+      <section class="card">
+        <h2 class="step-h"><button type="button" class="head" aria-expanded="false" aria-controls="b-grid">
+          <span><span class="t">Grille d'occupation 2D</span><span class="s" data-summary></span></span>
+          <span class="chip" data-chip></span>
+          <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg>
+        </button></h2>
+        <div class="body" id="b-grid"><div class="inner"><div class="pad">
+          <button class="btn primary" id="btnGoGrid" type="button">Ouvrir la grille 2D</button>
+          <div id="gridStats" class="gstats"></div>
+          <p class="hint">Dans l'onglet Grille 2D, deux curseurs sous l'image : le premier fait glisser la séparation entre la grille <b>sans filtre</b> (à gauche) et <b>avec filtre</b> (à droite) ; le second règle la force du filtre (0 = désactivé). Un bon filtre fait disparaître les cellules occupées isolées (le tableau les compte) sans effacer les murs.</p>
+        </div></div></div>
+      </section>
+    </li>
+
+  </ol>
 </aside>
 
 <main>
   <div class="toolbar">
     <div class="seg" role="tablist" aria-label="Vue">
       <button role="tab" id="tabLive" aria-selected="true" type="button">Direct</button>
+      <button role="tab" id="tabSlam" aria-selected="false" type="button">SLAM</button>
       <button role="tab" id="tabMap" aria-selected="false" type="button">Carte</button>
       <button role="tab" id="tabGrid" aria-selected="false" type="button">Grille 2D</button>
       <button role="tab" id="tabLoc" aria-selected="false" type="button">Localisation</button>
@@ -683,6 +747,10 @@
     <div class="opts" id="liveOpts">
       <label class="check"><input type="checkbox" id="optLiveSeg"> Segments</label>
       <label class="check"><input type="checkbox" id="optIntensity" checked> Intensité</label>
+    </div>
+    <div class="opts" id="slamOpts" style="display:none">
+      <label class="check" title="Garde toute la carte à l'écran pendant que le robot avance"><input type="checkbox" id="slamFollow" checked> Vue automatique</label>
+      <label class="check"><input type="checkbox" id="slamPath" checked> Trajet</label>
     </div>
     <div class="opts" id="gridOpts" style="display:none">
       <label class="check"><input type="radio" name="gmode" value="cmp" checked> Comparer</label>
@@ -2218,7 +2286,7 @@ const nextColor = () => scanColor(state.colorIdx++);
 
 const state = {
   scans: [], selected: -1, live: null, tab: 'live',
-  view: { live: { cx: 0, cy: 0, s: 60, auto: true }, map: { cx: 3, cy: 2, s: 80 } },
+  view: { live: { cx: 0, cy: 0, s: 60, auto: true }, map: { cx: 3, cy: 2, s: 80 }, slam: { cx: 0, cy: 0, s: 80 } },
   wipe: 0.5, gridStats: null,
   grid: null, vmap: null, gridCanvas: null, refGrid: null, refSegs: null, queue: 0, counters: {},
   port: null, reader: null, readLoopPromise: null, connected: false, stop: false,
@@ -2252,14 +2320,15 @@ const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
 /* ======================================================================
    CHRONOLOGIE : état de chaque étape, résumés, ouverture automatique
    ====================================================================== */
-const STEPS = ['connect', 'capture', 'place', 'maps', 'grid', 'loc', 'export'];
-const OPTIONAL = new Set(['maps', 'loc']);
+const STEPS = ['connect', 'slam', 'capture', 'place', 'loc', 'export'];
+const OPTIONAL = new Set(['slam', 'loc']);
 const stepEl = k => document.querySelector(`.step[data-step="${k}"]`);
 
 function stepDone() {
   const n = state.scans.length;
   return {
     connect: flags.everConnected || n > 0,
+    slam: typeof slam !== 'undefined' && slam.kept > 0,
     capture: n > 0,
     place: flags.mapSeen && n > 0 && (flags.posed || n === 1),
     maps: (flags.tuned || flags.exported) && n > 0,
@@ -2276,6 +2345,7 @@ function stepSummaries() {
     : 'Branchez l’ESP32 en USB ou connectez-vous à son Wi-Fi';
   return {
     connect: conn,
+    slam: typeof slamSummary === 'function' ? slamSummary() : 'Le robot cartographie tout seul',
     capture: n ? plural(n, 'scan capturé', 'scans capturés') : 'Le robot reste immobile',
     place: n ? (flags.mapSeen && (flags.posed || n === 1) ? 'Poses réglées sur la carte' : n === 1 ? 'Un seul scan : rien à aligner' : 'Alignez les scans sur la carte') : 'Après la première capture',
     maps: state.vmap ? `${plural(state.vmap.segments.length, 'segment', 'segments')} · grille ${state.grid.nx}×${state.grid.ny}` : 'Valeurs par défaut',
@@ -2536,7 +2606,7 @@ function wsMessage(data) {
                  v = vitesse en % (curseur « Vitesse », 20 à 100)
      S           arrêt
    Répétées toutes les 100 ms tant qu'une touche est tenue ; le sketch s'arrête seul si elles cessent. */
-const drive = { keys: new Set(), ignore: new Set(), shift: false, pad: [0, 0, 0], last: 'S' };   // ignore : touches tenues pendant un arrêt, sans effet jusqu'au relâchement
+const drive = { keys: new Set(), ignore: new Set(), shift: false, pad: [0, 0, 0], last: 'S', busyUntil: 0, moves: 0 };   // ignore : touches tenues pendant un arrêt, sans effet jusqu'au relâchement
 const driveReady = () => !!(state.ws && state.ws.readyState === 1);
 const clamp1 = v => Math.max(-1, Math.min(1, v));
 function keysVec(k, shift) {          // touches → [vx, vy, w]
@@ -2560,7 +2630,7 @@ function driveStep(v) {
   if (!driveReady() || !v.some(x => x !== 0)) return;
   try { state.ws.send(`P,${v[0]},${v[1]},${v[2]},${driveSpeed()},${stepMs()}`); } catch (_) { return; }
   $('drvState').textContent = 'Pas : ' + driveLabel(v).toLowerCase();
-  stepFlash = Date.now() + stepMs();
+  stepFlash = Date.now() + stepMs(); drive.busyUntil = Date.now() + stepMs() + 150; drive.moves++;
   document.querySelectorAll('#drive .pad button[data-v]').forEach(b => {
     const bv = b.dataset.v.split(',').map(Number);
     b.dataset.on = String(bv.some((x, i) => x !== 0 && x === v[i]));
@@ -2576,7 +2646,7 @@ function driveLabel(v) {
   return parts.length ? parts.join(' + ') : 'Arrêt';
 }
 function driveTick() {
-  const show = driveReady() && state.tab === 'live';
+  const show = driveReady() && (state.tab === 'live' || state.tab === 'slam');
   $('drive').hidden = !show;
   const v = show ? driveVec() : [0, 0, 0], moving = v.some(x => x !== 0);
   const cmd = moving ? `D,${v[0]},${v[1]},${v[2]},${driveSpeed()}` : 'S';
@@ -2584,6 +2654,7 @@ function driveTick() {
     if (drive.last !== 'S' && driveReady()) { try { state.ws.send('S'); } catch (_) { /* idem */ } }
     drive.last = 'S'; return;
   }
+  if (moving) { drive.busyUntil = Date.now() + 250; drive.moves++; }   // le SLAM attend que le robot soit arrêté
   if (moving || drive.last !== 'S') { if (driveReady()) { try { state.ws.send(cmd); } catch (_) { /* liaison coupée : le robot s'arrête seul */ } } }
   drive.last = cmd;
   $('drvState').textContent = driveLabel(v);
@@ -2716,7 +2787,7 @@ function ingest(rows) {
   if (!$('optFreeze').checked) {
     state.live = scan;
     state.liveSegs = $('optLiveSeg').checked ? segmentsOf(scan) : [];
-    if (state.tab === 'live') draw();
+    if (state.tab === 'live' || state.tab === 'slam') draw();
   }
   updateChrome();
 }
@@ -2925,6 +2996,7 @@ function gridCapped(scans, o) {                  // évite une grille de plusieu
 /* ---------- cartes ---------- */
 function scheduleRebuild() {
   if (!$('autoBuild').checked) return;
+  if (typeof slam !== 'undefined' && slam.on && state.tab === 'slam') return;   // pendant le SLAM, les cartes ne sont refaites qu'en quittant l'onglet
   clearTimeout(state.rebuildTimer);
   state.rebuildTimer = setTimeout(rebuild, 120);
 }
@@ -3175,7 +3247,7 @@ function drawGrid() {
 
 function draw() {
   drawBackground();
-  if (state.tab === 'live') drawLive(); else if (state.tab === 'grid') drawGrid(); else if (state.tab === 'loc') drawLoc(); else drawMap();
+  if (state.tab === 'live') drawLive(); else if (state.tab === 'grid') drawGrid(); else if (state.tab === 'loc') drawLoc(); else if (state.tab === 'slam') drawSlam(); else drawMap();
 }
 
 /* ---------- pastille de connexion, HUD, écran vide ---------- */
@@ -3253,6 +3325,8 @@ function updateChrome() {
     hud.hidden = false;
     hud.innerHTML = `<span><b>${vis}</b>${vis > 1 ? 'scans' : 'scan'}</span>` +
       (state.vmap ? `<span><b>${state.vmap.segments.length}</b>segments</span><span><b>${state.grid.nx}×${state.grid.ny}</b>cellules</span>` : '');
+  } else if (state.tab === 'slam') {
+    hud.innerHTML = slamHud(); hud.hidden = !hud.innerHTML;
   } else if (state.tab === 'loc') {
     hud.innerHTML = locLegendHtml(); hud.hidden = !hud.innerHTML;
   } else hud.hidden = true;
@@ -3265,6 +3339,7 @@ function updateChrome() {
 /* ---------- vue : ajuster, zoom, déplacement ---------- */
 function fitView() {
   if (state.tab === 'live') { state.view.live.auto = true; draw(); return; }
+  if (state.tab === 'slam') { $('slamFollow').checked = true; draw(); return; }
   if (state.tab === 'loc') { locFitView(); return; }
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const s of state.scans) {
@@ -3285,7 +3360,7 @@ cv.addEventListener('wheel', e => {
   const v = V(), [wx, wy] = s2w(e.offsetX, e.offsetY);
   v.s = Math.min(2000, Math.max(5, v.s * Math.exp(-e.deltaY * 0.0012)));
   v.cx = wx - (e.offsetX - W / 2) / v.s; v.cy = wy + (e.offsetY - H / 2) / v.s;
-  if (state.tab === 'live') v.auto = false;
+  if (state.tab === 'live') v.auto = false; else if (state.tab === 'slam') $('slamFollow').checked = false;
   draw();
 }, { passive: false });
 
@@ -3314,7 +3389,7 @@ cv.addEventListener('pointermove', e => {
     refreshPoseInputs(); touchPose(); scheduleRebuild();
   } else {
     v.cx -= (e.offsetX - drag.lx) / v.s; v.cy += (e.offsetY - drag.ly) / v.s;
-    if (state.tab === 'live') v.auto = false;
+    if (state.tab === 'live') v.auto = false; else if (state.tab === 'slam') $('slamFollow').checked = false;
   }
   drag.lx = e.offsetX; drag.ly = e.offsetY;
   draw();
@@ -3323,7 +3398,7 @@ const endDrag = () => { drag = null; };
 cv.addEventListener('pointerup', endDrag); cv.addEventListener('pointercancel', endDrag);
 
 window.addEventListener('keydown', e => {
-  if ($('diag').open) return;
+  if ($('diag').open || e.defaultPrevented) return;      // Espace = arrêt du robot quand le pilotage est actif : pas de capture en plus
   const tag = (document.activeElement?.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
   if (e.code === 'Space') {
@@ -3348,6 +3423,7 @@ function setTab(t) {
   state.tab = t;
   try { updateDrive(); } catch (_) { /* idem */ }
   $('tabLive').setAttribute('aria-selected', t === 'live');
+  $('tabSlam').setAttribute('aria-selected', t === 'slam');
   $('tabMap').setAttribute('aria-selected', t === 'map');
   $('tabGrid').setAttribute('aria-selected', t === 'grid');
   $('tabLoc').setAttribute('aria-selected', t === 'loc');
@@ -3355,6 +3431,8 @@ function setTab(t) {
   $('locPanel').hidden = t !== 'loc';
   $('liveOpts').style.display = t === 'live' ? 'flex' : 'none';
   $('mapOpts').style.display = t === 'map' ? 'flex' : 'none';
+  $('slamOpts').style.display = t === 'slam' ? 'flex' : 'none';
+  if (t === 'slam') setOpen('slam', true);
   $('gridOpts').style.display = t === 'grid' ? 'flex' : 'none';
   $('cmpBar').hidden = !(t === 'grid' && state.scans.length);
   if (t === 'loc') {
@@ -3367,6 +3445,7 @@ function setTab(t) {
   updateChrome(); updateTimeline();
 }
 $('tabLive').onclick = () => setTab('live');
+$('tabSlam').onclick = () => setTab('slam');
 $('tabMap').onclick = () => setTab('map');
 $('tabGrid').onclick = () => setTab('grid');
 $('tabLoc').onclick = () => setTab('loc');
@@ -4352,6 +4431,204 @@ function drawLocLayer(lay) {
 (function () {                                                        // ouverture / fermeture de l'étape : le fond change
   const st = document.querySelector('.step[data-step=loc]'); if (!st) return;
   new MutationObserver(() => { lmCache.key = ''; if (st.classList.contains('open')) lmToMapTab(); draw(); }).observe(st, { attributes: true, attributeFilter: ['class'] });
+})();
+
+
+/* ================= SLAM automatique : pilotage + carte ================= */
+const slam = { on: false, busy: false, tr: null, timer: 0, kept: 0, skipped: 0, rejected: 0, dist: 0, last: null, lastRes: null, moves: 0, lastCap: 0, stack: [], bb: null, bbKey: '', resetAsk: 0 };
+const slamNum = (id, d, lo, hi) => { const v = parseFloat($(id).value); return isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
+const slamLive = () => isLinked() || !!state.simTimer;
+const slamMoving = () => Date.now() < drive.busyUntil + slamNum('slamSettle', 700, 100, 5000);   // commande récente + temps de s'arrêter
+const slamPose = () => slam.last || (state.scans.length ? state.scans[state.scans.length - 1].pose : { x: 0, y: 0, th: 0 });
+
+function slamSummary() {
+  if (slam.on) return slam.busy ? 'En marche · scan en cours' : `En marche · ${plural(state.scans.length, 'scan', 'scans')}`;
+  return slam.kept ? `Arrêté · ${plural(slam.kept, 'scan pris', 'scans pris')}` : 'Le robot cartographie tout seul';
+}
+function slamHud() {
+  if (!state.scans.length && !slam.on) return '';
+  const p = slamPose();
+  return `<span><b>${state.scans.length}</b>scans</span><span><b>${fmt(slam.dist, 2)}</b>m parcourus</span>`
+    + `<span><b>${fmt(p.x, 2)} · ${fmt(p.y, 2)}</b>x · y (m)</span><span><b>${fmt(p.th, 1)}°</b>cap</span>`
+    + `<span><b>${slam.on ? (slamMoving() ? 'En route' : 'Immobile') : 'Arrêté'}</b>robot</span>`;
+}
+function slamUi() {
+  const t = $('slamToggle');
+  t.textContent = slam.on ? 'Arrêter le SLAM' : (state.scans.length ? 'Reprendre le SLAM' : 'Démarrer le SLAM');
+  t.classList.toggle('primary', !slam.on);
+  $('slamNow').disabled = !slam.on || slam.busy;
+  $('slamUndo').disabled = !slam.stack.length || slam.busy;
+  const p = slamPose(), r = slam.lastRes;
+  $('slamInfo').innerHTML = state.scans.length || slam.on
+    ? `<div><b>${state.scans.length}</b>scans</div><div><b>${fmt(slam.dist, 2)} m</b>parcourus</div><div><b>${slam.skipped + slam.rejected}</b>ignorés</div>`
+      + `<div class="wide"><b>x ${fmt(p.x, 2)} m · y ${fmt(p.y, 2)} m · θ ${fmt(p.th, 1)}°</b>Position du robot dans la carte`
+      + (r && REG_LABEL[r.verdict] ? ` · dernier recalage : ${REG_LABEL[r.verdict][0].toLowerCase()}${isFinite(r.inlierFrac) ? ' (' + Math.round(100 * r.inlierFrac) + ' % des points)' : ''}` : '') + '</div>'
+    : '';
+  try { updateTimeline(); updateChrome(); } catch (_) { /* démarrage */ }
+}
+const slamSay = (m, c = '') => setStatus('slamStatus', m, c);
+
+function slamStart() {
+  if (slam.on) return;
+  if (!slamLive()) { slamSay('Connecte le lidar (étape 1) ou lance la simulation.', 'err'); return; }
+  slam.tr = trackerNew({ N: Math.round(slamNum('slamN', 3, 1, 8)), radius: slamNum('slamRadius', 1, 0.2, 5), thRange: 40 });
+  const last = state.scans[state.scans.length - 1];
+  slam.stack = [];
+  if (last) { trackerStep(slam.tr, cleanOf(last), { ...last.pose }); slam.last = { ...last.pose }; } else slam.last = null;   // on continue à la suite du dernier scan
+  slam.on = true; slam.moves = drive.moves; slam.lastCap = Date.now();
+  slam.timer = setInterval(slamLoop, 150);
+  setTab('slam');
+  slamSay(last ? 'SLAM en marche : il continue à la suite du dernier scan. Pilote le robot : un scan est pris à chaque arrêt.' : 'SLAM en marche : premier scan…', 'ok');
+  slamUi();
+  if (!last) slamCapture();
+}
+function slamStop(msg, cls = '') {
+  clearInterval(slam.timer); slam.on = false;
+  if (state.ws && state.ws.readyState === 1) { try { state.ws.send('S'); } catch (_) { /* idem */ } }
+  slamSay(msg || 'SLAM arrêté. La carte reste dans l’onglet Carte pour la retoucher ou l’exporter.', cls);
+  slamUi(); draw();
+}
+function slamLoop() {
+  if (!slam.on || slam.busy) return;
+  if (!slamLive()) { slamStop('Connexion perdue : SLAM arrêté.', 'err'); return; }
+  const trig = $('slamTrig').value, moving = slamMoving();
+  if (trig === 'stop' && drive.moves !== slam.moves && !moving) slamCapture();
+  else if (trig === 'timer' && !moving && Date.now() - slam.lastCap > slamNum('slamEvery', 3, 1, 60) * 1000) slamCapture();
+  else if (state.tab === 'slam') { $('hud').innerHTML = slamHud(); }
+}
+async function slamCapture() {
+  if (!slam.on || slam.busy) return;
+  slam.busy = true; slam.moves = drive.moves; slam.lastCap = Date.now(); slamUi();
+  slamSay('Scan en cours…');
+  const got = await robotWaitScan(4000);                       // un tour complet reçu maintenant (donc robot arrêté)
+  if (!slam.on) { slam.busy = false; return; }
+  if (!got) { slam.busy = false; slamSay('Aucun scan reçu du lidar : vérifie la connexion.', 'err'); slamUi(); return; }
+  await nextPaint();
+  const scan = { ...got, pose: { x: 0, y: 0, th: 0 }, visible: true };
+  let res;
+  try { res = trackerStep(slam.tr, cleanOf(scan)); }
+  catch (e) { slam.busy = false; slamSay('Recalage impossible : ' + e.message, 'err'); slamUi(); return; }
+  slam.lastRes = res;
+  const first = res.verdict === 'base';
+  if (res.verdict === 'echec') {                                // position introuvable : on n'ajoute pas ce scan à la carte
+    slam.tr.items.pop(); slam.rejected++; slam.busy = false;
+    slamSay('Position introuvable : scan ignoré. Avance moins, ou rapproche le robot de la zone déjà cartographiée.', 'err'); slamUi(); draw(); return;
+  }
+  const pose = res.pose, p0 = slam.last;
+  const d = !first && p0 ? Math.hypot(pose.x - p0.x, pose.y - p0.y) : 0;
+  if (!first && p0 && res.verdict === 'bonne' && d * 100 < slamNum('slamMinMove', 3, 0, 50) && Math.abs(wrapDeg(pose.th - p0.th)) < 3) {
+    slam.tr.items.pop(); slam.skipped++; slam.busy = false;       // le robot n'a (presque) pas bougé : rien de neuf
+    slamSay('Le robot n’a presque pas bougé : scan ignoré.'); slamUi(); draw(); return;
+  }
+  const n = state.counters.slam = (state.counters.slam ?? -1) + 1;
+  const sc = { ...scan, name: `slam_${String(n).padStart(3, '0')}`, color: nextColor(),
+    pose: { x: Math.round(pose.x * 1000) / 1000, y: Math.round(pose.y * 1000) / 1000, th: Math.round(pose.th * 10) / 10 } };
+  state.scans.push(sc); state.selected = state.scans.length - 1; flags.exported = false;
+  slam.stack.push({ scan: sc, dist: d }); slam.kept++; slam.dist += d; slam.last = { ...sc.pose };
+  renderScanList(); scheduleRebuild();
+  slam.busy = false;
+  if (first) slamSay(`${sc.name} : premier scan, il définit l’origine de la carte.`, 'ok');
+  else if (res.verdict === 'bonne') slamSay(`${sc.name} placé (${Math.round(100 * res.inlierFrac)} % des points sur la carte).`, 'ok');
+  else slamSay(`${sc.name} placé, à vérifier : ${res.reason || 'recalage peu sûr'}. Reviens en arrière ou annule ce scan.`, 'warn');
+  slamUi(); draw();
+}
+function slamUndo() {
+  if (slam.busy) return;
+  const e = slam.stack.pop(); if (!e) return;
+  const i = state.scans.indexOf(e.scan); if (i >= 0) state.scans.splice(i, 1);
+  if (slam.tr && slam.tr.items.length > 1) slam.tr.items.pop();
+  slam.kept = Math.max(0, slam.kept - 1); slam.dist = Math.max(0, slam.dist - e.dist);
+  slam.last = state.scans.length ? { ...state.scans[state.scans.length - 1].pose } : null;
+  state.selected = Math.min(state.selected, state.scans.length - 1);
+  renderScanList(); scheduleRebuild(); updateTimeline(); slamSay('Dernier scan annulé.'); slamUi(); draw();
+}
+function slamReset() {
+  const b = $('slamReset');
+  if (state.scans.length && Date.now() - slam.resetAsk > 3000) {   // premier clic : confirmation, sans fenêtre bloquante
+    slam.resetAsk = Date.now(); b.textContent = 'Effacer la carte ?'; setTimeout(() => { b.textContent = 'Recommencer'; }, 3000); return;
+  }
+  b.textContent = 'Recommencer'; slam.resetAsk = 0;
+  if (slam.on) slamStop('SLAM arrêté.');
+  state.scans = []; state.selected = -1; state.counters = {}; state.colorIdx = 0;
+  flags.mapSeen = false; flags.gridSeen = false; flags.posed = false; flags.tuned = false; flags.exported = false;
+  Object.assign(slam, { tr: null, kept: 0, skipped: 0, rejected: 0, dist: 0, last: null, lastRes: null, stack: [], bbKey: '' });
+  slamSay('Carte effacée.');
+  renderScanList(); rebuild(); slamUi(); draw();
+}
+
+/* ---------- dessin de l'onglet SLAM ---------- */
+function slamFit() {
+  const v = state.view.slam;
+  const key = state.scans.length + '|' + state.scans.reduce((a, s) => a + s.pose.x * 3 + s.pose.y * 7 + s.pose.th, 0).toFixed(3);
+  if (key !== slam.bbKey) {
+    slam.bbKey = key; let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const s of state.scans) {
+      if (!s.visible) continue;
+      const p = worldPoints(cleanOf(s), s.pose);
+      for (let i = 0; i < p.length; i += 2) { x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); y0 = Math.min(y0, p[i + 1]); y1 = Math.max(y1, p[i + 1]); }
+    }
+    slam.bb = isFinite(x0) ? { x0, y0, x1, y1 } : null;
+  }
+  const bb = slam.bb;
+  if (!bb) { v.cx = 0; v.cy = 0; v.s = Math.min(W, H) / 2 / (4 * 1.08); return; }
+  v.cx = (bb.x0 + bb.x1) / 2; v.cy = (bb.y0 + bb.y1) / 2;
+  v.s = Math.min(W / Math.max(1.5, (bb.x1 - bb.x0) * 1.2), H / Math.max(1.5, (bb.y1 - bb.y0) * 1.2));
+}
+function drawSlam() {
+  if ($('slamFollow').checked) slamFit();
+  drawGridLines();
+  if (!state.scans.length) {
+    if (state.live) drawPoints(localPoints(cleanOf(state.live)), css('--live'), null, 1.6);
+    drawRobot(0, 0, 0, css('--ink'), 11);
+    ctx.save(); ctx.fillStyle = css('--muted'); ctx.font = '14px ' + css('--font'); ctx.textAlign = 'center';
+    ctx.fillText(slam.on ? 'Premier scan en cours…' : 'Démarre le SLAM : un premier scan est pris, puis la carte se construit à chaque arrêt du robot.', W / 2, H - 70);
+    ctx.restore(); return;
+  }
+  const n = state.scans.length, grey = new Float32Array(2000).fill(0.5);          // carte en une seule teinte, le dernier scan en couleur
+  state.scans.forEach((s, i) => { if (s.visible && i < n - 1) { const w = worldPoints(cleanOf(s), s.pose); drawPoints(w, css('--ink'), grey.length >= w.length / 2 ? grey : null, 1.7); } });
+  const lastS = state.scans[n - 1]; if (lastS.visible) drawPoints(worldPoints(cleanOf(lastS), lastS.pose), lastS.color, null, 2);
+  if ($('slamPath').checked && state.scans.length > 1) {
+    ctx.save(); ctx.strokeStyle = css('--blue'); ctx.lineWidth = 1.6; ctx.setLineDash([5, 4]); ctx.beginPath();
+    state.scans.forEach((s, i) => { const [sx, sy] = w2s(s.pose.x, s.pose.y); if (i) ctx.lineTo(sx, sy); else ctx.moveTo(sx, sy); });
+    ctx.stroke(); ctx.restore();
+  }
+  const p = slamPose();
+  if (state.live && !(slam.on && slamMoving())) drawPoints(worldPoints(cleanOf(state.live), p), css('--live'), null, 1.5);   // ce que le robot voit maintenant, quand il est arrêté
+  drawRobot(p.x, p.y, p.th, css('--ink'), 11);
+}
+
+/* ---------- commandes ---------- */
+$('slamToggle').onclick = () => slam.on ? slamStop() : slamStart();
+$('slamNow').onclick = () => { if (!slam.on) { slamSay('Démarre d’abord le SLAM.', 'err'); return; } slamCapture(); };
+$('slamUndo').onclick = slamUndo;
+$('slamReset').onclick = slamReset;
+$('slamToMap').onclick = () => setTab('map');
+$('slamTrig').addEventListener('change', () => { $('slamEveryBox').hidden = $('slamTrig').value !== 'timer'; });
+['slamN', 'slamRadius'].forEach(id => $(id).addEventListener('change', () => {
+  if (!slam.tr) return;
+  slam.tr.cfg.N = Math.round(slamNum('slamN', 3, 1, 8)); slam.tr.cfg.radius = slamNum('slamRadius', 1, 0.2, 5);
+}));
+['slamFollow', 'slamPath'].forEach(id => $(id).addEventListener('change', () => { slam.bbKey = ''; draw(); }));
+slamUi();
+
+/* ---------- Placer les scans : recalage par rapport aux précédents (même moteur que Localisation › Scan à scan) ---------- */
+function placeRun(all) {
+  if (state.scans.length < 2) { setStatus('placeStatus', 'Il faut au moins deux scans : un de référence et celui à placer.', 'warn'); return; }
+  $('regRef').value = 'prev'; $('regMode').value = 'ref'; $('regMode').dispatchEvent(new Event('change')); regSyncN();
+  if (all) $('btnRegAll').click(); else $('btnReg').click();
+}
+$('btnPlacePrev').onclick = () => placeRun(false);
+$('btnPlaceAll').onclick = () => placeRun(true);
+$('btnPlaceUndo').onclick = () => $('btnRegUndo').click();
+(function placeMirror() {
+  const mir = () => {
+    $('placeStatus').textContent = $('regStatus').textContent; $('placeStatus').className = $('regStatus').className;
+    $('btnPlaceUndo').hidden = $('btnRegUndo').hidden;
+    $('btnPlacePrev').disabled = $('btnPlaceAll').disabled = reg.busy;
+  };
+  new MutationObserver(mir).observe($('regStatus'), { childList: true, characterData: true, subtree: true, attributes: true });
+  new MutationObserver(mir).observe($('btnRegUndo'), { attributes: true, attributeFilter: ['hidden'] });
+  new MutationObserver(mir).observe($('btnReg'), { attributes: true, attributeFilter: ['disabled'] });
 })();
 
 

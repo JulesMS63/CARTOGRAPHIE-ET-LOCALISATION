@@ -114,9 +114,22 @@ Le curseur **Vitesse** (v18) règle la vitesse des 4 roues : si les petits moteu
 Le curseur **Durée du pas** (50 à 600 ms) règle la longueur d'un pas ; avec le curseur Vitesse, on dose l'avance à chaque appui. La page envoie `P,vx,vy,w,v,ms`
 et c'est l'ESP32 qui coupe les moteurs à la fin des `ms` millisecondes (30 à 1000), sans dépendre de la latence du Wi-Fi. **Espace** (ou ■) envoie `S`.
 
+### SLAM automatique (v20)
+
+L'onglet **SLAM** et l'étape **SLAM automatique** du menu : on pilote le robot avec le pavé (mode continu ou **Pas à pas**) et la carte se construit toute seule.
+Après chaque arrêt du robot (commande terminée + « Attente après l'arrêt », 700 ms par défaut), la page prend un tour de lidar complet, le recale sur les derniers scans fiables
+(`trackerStep` : carte locale de N scans, mouvement prévu, recherche élargie si le lien est perdu) et l'ajoute à la carte avec sa position `x, y, θ`.
+Le premier scan définit l'origine ; si des scans existent déjà, le SLAM continue à leur suite. Un scan dont la position est introuvable n'est pas ajouté ; un scan pris alors que
+le robot n'a presque pas bougé (« Garder si bougé de », 3 cm) est ignoré ; un recalage peu sûr est signalé. Boutons : **Scanner maintenant**, **Annuler le dernier scan**, **Recommencer**, **Voir la carte**.
+Autres déclencheurs (Réglages) : toutes les N secondes, ou seulement à la demande. Pendant le SLAM, la grille et la carte vectorielle ne sont refaites qu'en quittant l'onglet.
+
+**Placer les scans** : « Recaler le scan choisi » (comparé au scan juste avant) et « Recaler tous à la suite » refont le recalage par rapport aux scans précédents (même moteur que Localisation › Scan à scan, qui garde les autres références et la recherche « Partout »).
+Les étapes « Grille d'occupation 2D » et « Régler les cartes » ont été retirées du menu (l'onglet Grille 2D et les valeurs par défaut des cartes restent).
+Espace arrête le robot sans plus déclencher une capture de scan.
+
 #### Sketch ESP32 : `arduino/ESP32_Robot_WiFi_Pilotage/`
 
-Lidar en direct par WebSocket (port 81), réception des ordres `D,vx,vy,w,v` / `P,vx,vy,w,v,ms` / `S`, arrêt automatique 300 ms sans ordre.
+Lidar en direct par WebSocket (port 81), réception des ordres `D,vx,vy,w,v` / `P,vx,vy,w,v,ms` / `S`, arrêt automatique 300 ms sans ordre. Aucun `delay()` bloquant : le test des roues (`t`), `f`, le pas à pas et l'init de la carte I2C passent par des minuteurs dans `loop()` (seul reste un `delayMicroseconds(5)` dans l'I2C simulé).
 Les moteurs reçoivent le **PWM directement sur les 8 broches** (M1A = D5, M1B = D18, M2A = D19, M2B = D21, M3A = D2, M3B = D4, M4A = D16, M4B = D17 ;
 M1 avant droit, M2 avant gauche, M3 arrière gauche, M4 arrière droit). Les montages I2C (bibliothèque `MecanumCar_v2`, ou I2C plus lent) restent
 sélectionnables pour comparer. Le sketch n'est pas encore validé sur le robot : le sens de chaque moteur se règle avec les cases « inverser » de la page de test.
