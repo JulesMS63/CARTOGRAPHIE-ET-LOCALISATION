@@ -432,6 +432,7 @@
               <div class="field"><label for="slamMaxScans">Auto : s'arrêter après (scans)</label><input type="number" id="slamMaxScans" value="250" min="5" max="500" step="5"></div>
               <div class="field"><label for="slamMaxMin">Auto : durée max (min)</label><input type="number" id="slamMaxMin" value="30" min="1" max="120" step="1"></div>
               <div class="field"><label for="slamStraight">Auto : ligne droite maximale (cm)</label><input type="number" id="slamStraight" value="50" min="30" max="200" step="10"></div>
+              <div class="field"><label for="slamKnown">Auto : ligne droite en zone déjà cartographiée (cm, 0 = comme ci-dessus)</label><input type="number" id="slamKnown" value="150" min="0" max="300" step="10"></div>
               <div class="field"><label for="slamAutoStep">Auto : pas latéral maximal (cm)</label><input type="number" id="slamAutoStep" value="40" min="15" max="80" step="5"></div>
               <div class="field"><label for="slamAutoR">Auto : marge autour du robot (cm)</label><input type="number" id="slamAutoR" value="25" min="15" max="50" step="1"></div>
               <div class="field"><label for="slamDenoise">Filtre du bruit lidar (pics isolés, tremblement)</label><select id="slamDenoise"><option value="yes">Oui</option><option value="no">Non</option></select></div>
@@ -4764,7 +4765,7 @@ function slamPlanReset() {
     wrongDir: 0, still: 0, nofit: 0, stuck: 0, arrivals: {}, banned: [], nSteps: 0, homing: false, homeSteps: 0 });
 }
 const slamHomeWanted = () => $('slamHome').value !== 'no' && !!slamBase();
-const slamAutoNums = () => ({ straight: slamNum('slamStraight', 50, 30, 200) / 100, step: slamNum('slamAutoStep', 40, 15, 80) / 100, infl: slamNum('slamAutoR', 25, 15, 50) / 100, cover: slamNum('slamCover', 2, 0, 5) });
+const slamAutoNums = () => ({ straight: slamNum('slamStraight', 50, 30, 200) / 100, known: slamNum('slamKnown', 150, 0, 300) / 100, step: slamNum('slamAutoStep', 40, 15, 80) / 100, infl: slamNum('slamAutoR', 25, 15, 50) / 100, cover: slamNum('slamCover', 2, 0, 5) });
 function slamBuildGrid(infl) {
   const sc = state.scans.filter(s => s.visible !== false);
   if (!sc.length) return null;
@@ -4929,18 +4930,32 @@ function slamPathAhead(G, dt, start, tgtI, len) {              // point du chemi
   }
   return ci;
 }
+/* Zone connue (v32) : la part des cases déjà vues (libres ou obstacle) dans un rayon de 60 cm. Là où la carte est déjà faite, le scan ne
+   sert plus qu'à se repérer : le robot fait des trajets plus longs entre deux scans (réglage « ligne droite en zone connue », 0 = désactivé). */
+function slamKnownFrac(G, x, y) {
+  const c = G.at(x, y); if (c < 0) return 0;
+  const a0 = c % G.nx, b0 = (c - a0) / G.nx, R = 6; let n = 0, k = 0;
+  for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+    if (dx * dx + dy * dy > R * R) continue;
+    const a = a0 + dx, b = b0 + dy; k++;
+    if (a >= 0 && b >= 0 && a < G.nx && b < G.ny && G.g[b * G.nx + a] !== 0) n++;
+  }
+  return n / k;
+}
+const slamKnownOk = (G, x, y) => slam.nSteps > 6 && slam.still === 0 && slamKnownFrac(G, x, y) >= 0.8;
 function slamStraightLen(G, dt, cur, ds, fresh, cfg) {          // plus longue ligne droite libre dans le cap actuel qui rapproche de la cible
-  const ang = cur.th * D2R, ahead = slamClearance(fresh, 0, cfg.infl * 0.85) - cfg.infl, dmax = Math.min(cfg.straight, ahead, ds * AGC + 0.15);
+  const ang = cur.th * D2R, ahead = slamClearance(fresh, 0, cfg.infl * 0.85) - cfg.infl, lim = Math.max(cfg.straight, cfg.known), dmax = Math.min(lim, ahead, ds * AGC + 0.15);
   let best = 0;
   for (let d = 0.05; d <= dmax + 1e-9; d += 0.05) {
-    const c = G.at(cur.x + Math.cos(ang) * d, cur.y + Math.sin(ang) * d);
+    const x = cur.x + Math.cos(ang) * d, y = cur.y + Math.sin(ang) * d, c = G.at(x, y);
     if (c < 0 || G.g[c] !== 1 || (G.blk[c] && !G.near[c])) break;
+    if (d > cfg.straight + 1e-9 && !(Math.round(d * 100) % 10 === 0 && slamKnownOk(G, x, y))) continue;   // au-delà de la ligne droite normale : seulement si l'arrivée est en zone connue
     if (dt[c] < 1e8 && dt[c] * AGC < ds * AGC - 0.6 * d) best = d;
   }
   return best;
 }
 function slamStartRun(L, cur, pct, cfg) {
-  const v = slam.kv.axis * pct, dur = Math.min(7000, Math.round(L / v * 1000));
+  const v = slam.kv.axis * pct, dur = Math.min(14000, Math.round(L / v * 1000));
   slam.run = { t0: Date.now(), dur, pct, wc: cfg.infl * 0.85, stop: cfg.infl + 0.1 };
   slam.step = { x0: cur.x, y0: cur.y, th0: cur.th, ms: dur, pct, type: 'move', vx: 1, vy: 0, w: 0, diag: false, cx: 1, cy: 0, run: true };
   slam.lastMove = { ...slam.step, undone: false };
@@ -5051,8 +5066,8 @@ function slamPlanStep() {
   if (!tight && !slam.noRot) {
     const wp = slamPathAhead(G, dt, start, tgt.i, 0.8), delta = wrapDeg(Math.atan2(G.cy(wp) - cur.y, G.cx(wp) - cur.x) / D2R - cur.th);
     if (Math.abs(delta) > 15) {                                // d'abord on se tourne vers la destination
-      const sgn = delta > 0 ? 1 : -1, deg = Math.min(Math.abs(delta), 35);
-      let ms = Math.round(Math.min(900, Math.max(100, deg / (slam.kw * pct) * 1000))); if (slam.nSteps <= 2 && !slam.still) ms = Math.min(ms, 200); else if (slam.still) ms = Math.min(900, Math.round(ms * (1 + 0.5 * slam.still)));
+      const sgn = delta > 0 ? 1 : -1, deg = Math.min(Math.abs(delta), cfg.known > 0 && slamKnownOk(G, cur.x, cur.y) ? 80 : 35);
+      let ms = Math.round(Math.min(deg > 40 ? 2400 : 900, Math.max(100, deg / (slam.kw * pct) * 1000))); if (slam.nSteps <= 2 && !slam.still) ms = Math.min(ms, 200); else if (slam.still) ms = Math.min(900, Math.round(ms * (1 + 0.5 * slam.still)));
       slam.stuck = 0; slamSendStep(0, 0, sgn, ms, { want: sgn * deg });
       slamSay(`Pas ${slam.nSteps} : il se tourne de ${Math.round(Math.abs(delta))}° ${sgn > 0 ? 'vers la gauche' : 'vers la droite'} (${what}).`, 'ok'); slamUi(); draw(); return;
     }
@@ -5117,8 +5132,8 @@ function slamTrajSimplify(raw) {                               // Douglas-Peucke
   const eps = 0.04, keep = new Uint8Array(raw.length); keep[0] = keep[raw.length - 1] = 1;
   const st = [[0, raw.length - 1]];
   while (st.length) {
-    const [a, b] = st.pop(); let dm = 0, im = -1; const [ax, ay] = raw[a], [bx, by] = raw[b], L = Math.hypot(bx - ax, by - ay) || 1e-9;
-    for (let i = a + 1; i < b; i++) { const d = Math.abs((bx - ax) * (ay - raw[i][1]) - (ax - raw[i][0]) * (by - ay)) / L; if (d > dm) { dm = d; im = i; } }
+    const [a, b] = st.pop(); let dm = 0, im = -1; const [ax, ay] = raw[a], [bx, by] = raw[b], ex = bx - ax, ey = by - ay, L2 = ex * ex + ey * ey;
+    for (let i = a + 1; i < b; i++) { const t = L2 > 1e-12 ? Math.max(0, Math.min(1, ((raw[i][0] - ax) * ex + (raw[i][1] - ay) * ey) / L2)) : 0, d = Math.hypot(raw[i][0] - ax - t * ex, raw[i][1] - ay - t * ey); if (d > dm) { dm = d; im = i; } }   // distance au segment : un trajet qui revient à son point de départ n'est pas écrasé
     if (dm > eps && im > 0) { keep[im] = 1; st.push([a, im], [im, b]); }
   }
   const s = raw.filter((_, i) => keep[i]), out = [s[0]];
@@ -5165,7 +5180,14 @@ function slamTrajTarget(G, dist, cur) {                        // prochain point
   for (let guard = 0; guard < n + 2; guard++) {
     for (let adv = true; adv && T.idx < n;) {                  // les points déjà atteints (ou doublés) sont passés
       adv = false;
-      for (let k = T.idx; k < Math.min(n, T.idx + 6); k++) if (Math.hypot(P[k][0] - cur.x, P[k][1] - cur.y) < (k === n - 1 ? 0.2 : 0.15)) { T.reached += k - T.idx + 1; T.idx = k + 1; T.onSteps = 0; adv = true; break; }
+      for (let k = T.idx; k < Math.min(n, T.idx + 12) && !adv; k++) {
+        let hit = Math.hypot(P[k][0] - cur.x, P[k][1] - cur.y) < (k === n - 1 ? 0.2 : 0.15);
+        if (!hit && k < n - 1) {                                // dépassé : le robot est au-delà du point (plus de la moitié du segment suivant) et près du trait
+          const dx = P[k + 1][0] - P[k][0], dy = P[k + 1][1] - P[k][1], L2 = dx * dx + dy * dy || 1e-9, t = ((cur.x - P[k][0]) * dx + (cur.y - P[k][1]) * dy) / L2;
+          hit = t > 0.5 && Math.hypot(cur.x - P[k][0] - t * dx, cur.y - P[k][1] - t * dy) < 0.35;
+        }
+        if (hit) { T.reached += k - T.idx + 1; T.idx = k + 1; T.onSteps = 0; adv = true; }
+      }
     }
     if (T.idx >= n) { slamTrajDone(cur); return null; }
     const i0 = T.idx; let best = -1, cell = -1, kind = 'path';
