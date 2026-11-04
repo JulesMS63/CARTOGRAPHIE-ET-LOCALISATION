@@ -27,9 +27,11 @@
 //   A,1[,v[,pause]] pilotage automatique (capteur ultrason + servo) à la vitesse v %, avec une pause de
 //                   pause ms entre deux avances (0 = sans pause) ;  A,0 l'arrête. D, P ou S reprennent la main.
 //   S               arrêt
+//   T,n             mesure de latence : le sketch répond E,T,n à cette page, la page calcule l'aller-retour
 //   Le sketch envoie aussi à la page : E,M (le robot bouge), E,R (il s'est arrêté), E,A,1 / E,A,0,raison (auto marche / arrêt), E,D,cm (distance devant)
 // La page répète D,... toutes les 100 ms tant qu'une touche est tenue.
-// Si plus rien n'arrive pendant 300 ms (touche relâchée, Wi-Fi coupé), le robot s'arrête.
+// Si plus rien n'arrive pendant 250 ms (touche relâchée, Wi-Fi coupé), le robot s'arrête : cet arrêt est aussi surveillé par un minuteur
+// matériel (toutes les 10 ms), donc il a lieu à l'heure même si la boucle principale est bloquée par un envoi Wi-Fi.
 //
 // Messages envoyés à la page : un tour de lidar par message, en JSON
 //   [{"a":angle_deg,"d":distance_mm,"i":intensite}, ...]
@@ -47,6 +49,7 @@
 #include <WebSocketsServer.h>
 #include <ld06.h>
 #include <Preferences.h>
+#include <esp_timer.h>
 #include "MecanumCar_v2.h"
 
 // --- Lidar ---
@@ -87,10 +90,13 @@ const int PWM_FREQ = 2000;                        // Hz (PWM sur les broches en 
 const int VITESSE_DEFAUT_PCT = 70;      // utilisée si la page n'envoie pas de vitesse
 const int PWM_MINI = 60;                // en dessous, les petits moteurs jaunes ne démarrent pas
 
-const uint32_t DELAI_ARRET_MS = 300;    // arrêt automatique si aucun ordre pendant ce temps
+const uint32_t DELAI_ARRET_MS = 250;    // arrêt automatique si aucun ordre pendant ce temps
+const float ECHELLE_ROTATION = 0.5f;    // les ordres de rotation D / P de la page sont réduits de moitié (la rotation est beaucoup plus vive que l'avance) ; 1.0 = rotation pleine vitesse
 uint32_t dernierOrdreMs = 0;
 uint32_t dernierMessageMs = 0;
 uint32_t dernierRafraichissementMs = 0;
+uint32_t lidarProchainMs = 0;            // pas d'envoi du lidar avant cet instant
+bool lidarRoulait = false;
 int pwmRoue[4]  = {0, 0, 0, 0};          // vitesse demandée à chaque roue (-255 à 255)
 int pwmEnvoye[4] = {1000, 1000, 1000, 1000};   // dernière valeur envoyée à la carte (1000 = inconnue)
 
@@ -234,17 +240,32 @@ bool enMouvement() {
   return false;
 }
 
+// --- Arrêt de sécurité indépendant de la boucle principale ---
+// Un minuteur matériel (toutes les 10 ms, sans delay) coupe les moteurs si le dernier ordre est trop ancien ou si la durée d'un pas est écoulée.
+// Sans lui, un envoi Wi-Fi qui bloque loop() pendant des centaines de ms laissait le robot rouler (ou tourner) bien après le relâchement de la touche.
+void arretUrgence() {
+  for (int i = 0; i < 8; i++) PWM_WRITE(i, 0);
+  for (int r = 0; r < 4; r++) { pwmRoue[r] = 0; pwmEnvoye[r] = 0; }
+  essaiManuel = false;
+}
+void secuMinuteur(void*) {
+  if (modeMoteur != MODE_GPIO || testRoue >= 0 || !enMouvement()) return;
+  uint32_t now = millis();
+  bool depasse = essaiManuel ? (int32_t)(now - essaiFinMs) >= 0 : (now - dernierOrdreMs) > DELAI_ARRET_MS + 100;   // +100 ms : loop() coupe elle-même en premier quand elle tourne
+  if (depasse) arretUrgence();
+}
+
 // Traduit (vx, vy, w) et une vitesse en % en vitesses des 4 roues, puis les applique.
-void piloter(int vx, int vy, int w, int pct) {
-  vx = constrain(vx, -1, 1); vy = constrain(vy, -1, 1); w = constrain(w, -1, 1);
+void piloter(float vx, float vy, float w, int pct) {
+  vx = constrain(vx, -1.0f, 1.0f); vy = constrain(vy, -1.0f, 1.0f); w = constrain(w, -1.0f, 1.0f);
   pct = constrain(pct, 10, 100);
 
   // Roues mecanum : avant = +, côté gauche = vy > 0, rotation gauche (anti-horaire) = w > 0.
   float v[4] = {
-    (float)(vx - vy - w),   // avant gauche
-    (float)(vx + vy + w),   // avant droit
-    (float)(vx + vy - w),   // arrière gauche
-    (float)(vx - vy + w)    // arrière droit
+    vx - vy - w,            // avant gauche
+    vx + vy + w,            // avant droit
+    vx + vy - w,            // arrière gauche
+    vx - vy + w             // arrière droit
   };
   float m = 0;
   for (int r = 0; r < 4; r++) m = max(m, fabsf(v[r]));
@@ -262,7 +283,7 @@ void piloter(int vx, int vy, int w, int pct) {
   for (int r = 0; r < 4; r++) moteur(r, pwmRoue[r]);
 
   if (change) {
-    Serial.printf("Ordre vx=%d vy=%d w=%d v=%d%%  ->  AG=%d AD=%d RG=%d RD=%d\n",
+    Serial.printf("Ordre vx=%.1f vy=%.1f w=%.2f v=%d%%  ->  AG=%d AD=%d RG=%d RD=%d\n",
                   vx, vy, w, pct, pwmRoue[0], pwmRoue[1], pwmRoue[2], pwmRoue[3]);
     if (!carteRepond() && millis() - dernierMessageMs > 2000) {
       dernierMessageMs = millis();
@@ -485,11 +506,15 @@ void automate() {
   }
 }
 
-void traiterCommande(uint8_t* payload, size_t length) {
+void traiterCommande(uint8_t num, uint8_t* payload, size_t length) {
   char buf[48];
   size_t n = length < sizeof(buf) - 1 ? length : sizeof(buf) - 1;
   memcpy(buf, payload, n);
   buf[n] = 0;
+  if (buf[0] == 'T') {                   // mesure de latence : on renvoie le nombre tel quel, tout de suite
+    if (n >= 3) { char rep[40]; snprintf(rep, sizeof(rep), "E,T,%s", buf + 2); webSocket.sendTXT(num, rep); }
+    return;
+  }
   if (buf[0] == 'S' || buf[0] == 'D' || buf[0] == 'P') { testRoue = -1; autoArreter("la page a repris la main", "main"); }   // un ordre de la page interrompt le test des roues et le pilotage automatique
 
   if (buf[0] == 'S') {
@@ -501,7 +526,7 @@ void traiterCommande(uint8_t* payload, size_t length) {
     if (lus >= 3) {
       essaiManuel = false;
       dernierOrdreMs = millis();
-      piloter(vx, vy, w, pct);
+      piloter(vx, vy, w * ECHELLE_ROTATION, pct);
     }
   } else if (buf[0] == 'A') {
     // Pilotage automatique : A,1[,vitesse%[,pause_ms]]  démarre ;  A,0  arrête
@@ -516,7 +541,7 @@ void traiterCommande(uint8_t* payload, size_t length) {
     if (lus >= 3) {
       if (ms < 30) ms = 30;
       if (ms > 1000) ms = 1000;
-      piloter(vx, vy, w, pct);
+      piloter(vx, vy, w * ECHELLE_ROTATION, pct);
       essaiManuel = true;                // la boucle principale coupe les moteurs à la fin de la durée
       essaiFinMs = millis() + ms;
     }
@@ -536,7 +561,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
       arreter();                         // plus personne ne pilote : on s'arrête
       break;
     case WStype_TEXT:
-      traiterCommande(payload, length);
+      traiterCommande(num, payload, length);
       break;
     default:
       break;
@@ -544,7 +569,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
 }
 
 // Un tour de lidar = un message JSON, avec tous les points et l'intensité.
-void envoyerDonneesLidarWebSocket() {
+void envoyerDonneesLidarWebSocket(bool leger) {   // leger : sans l'intensité (moins d'octets pendant que le robot roule)
   uint16_t nbPoints = ld06.getNbPointsInScan();
   if (nbPoints == 0) return;
 
@@ -557,8 +582,9 @@ void envoyerDonneesLidarWebSocket() {
     if (pt->distance == 0) continue;
     if (!premier) json += ",";
     premier = false;
-    json += "{\"a\":" + String(pt->angle, 1) + ",\"d\":" + String(pt->distance)
-          + ",\"i\":" + String(pt->intensity) + "}";
+    json += "{\"a\":" + String(pt->angle, 1) + ",\"d\":" + String(pt->distance);
+    if (!leger) json += ",\"i\":" + String(pt->intensity);
+    json += "}";
   }
   json += "]";
   webSocket.broadcastTXT(json);
@@ -826,6 +852,10 @@ void commandeSerie() {
 // Le Wi-Fi démarre EN PREMIER pour que le réseau « Robot-LiDAR » existe quoi qu'il arrive.
 void setup() {
   if (modeMoteur == MODE_GPIO) gpioActiver(true);   // moteurs à l'arrêt (PWM à 0) dès le démarrage
+  {
+    esp_timer_handle_t secu; esp_timer_create_args_t a = {}; a.callback = secuMinuteur; a.name = "secu";
+    esp_timer_create(&a, &secu); esp_timer_start_periodic(secu, 10000);   // surveillance des ordres : 10 ms
+  }
   pinMode(PIN_TRIG, OUTPUT); digitalWrite(PIN_TRIG, LOW);
   pinMode(PIN_ECHO, INPUT);
   attachInterrupt(digitalPinToInterrupt(PIN_ECHO), echoIsr, CHANGE);
@@ -840,6 +870,7 @@ void setup() {
 
   WiFi.mode(WIFI_AP);
   bool ok = WiFi.softAP(ssid, password);          // mot de passe : 8 caracteres minimum
+  WiFi.setSleep(false);                           // sans économie d'énergie du Wi-Fi : elle ajoute des dizaines de ms de latence aux ordres
   Serial.print("[1/4] Reseau ");
   Serial.print(ssid);
   Serial.println(ok ? " cree" : " ECHEC");
@@ -910,6 +941,19 @@ void loop() {
   }
 
   if (ld06.readScan()) {
-    envoyerDonneesLidarWebSocket();
+    // Un tour de lidar = ~15 Ko : l'envoi bloque la boucle le temps que le Wi-Fi le prenne, et pendant ce temps les ordres de la page
+    // attendent. On envoie donc moins en roulant (3 tours par seconde suffisent à l'affichage, sans intensité) et on espace encore plus
+    // si le Wi-Fi est lent. Dès que le robot s'arrête, le tour suivant part tout de suite : le SLAM l'attend.
+    uint32_t now = millis();
+    bool roule = enMouvement();
+    if (lidarRoulait && !roule) lidarProchainMs = now;
+    lidarRoulait = roule;
+    if ((int32_t)(now - lidarProchainMs) >= 0) {
+      envoyerDonneesLidarWebSocket(roule);
+      uint32_t duree = millis() - now;
+      uint32_t pause = roule ? 300 : 0;
+      if (duree > 40 && 3 * duree > pause) pause = 3 * duree;
+      lidarProchainMs = millis() + pause;
+    }
   }
 }
