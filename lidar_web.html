@@ -199,7 +199,9 @@
   .drive .pad button[data-on=true] { background: var(--blue); border-color: var(--blue); color: #fff; }
   .drive .pad button.stop { color: #b42318; }
   .drive .pad button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-  .drive .dspeed { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; }
+  .drive .dspeed { display: grid; grid-template-columns: 74px 1fr 46px; align-items: center; gap: 8px; }
+  .drive .dopts { display: inline-flex; gap: 12px; }
+  .drive .dspeed[hidden] { display: none; }
   .drive .dspeed input { width: 100%; min-width: 80px; margin: 0; }
   .drive .dspeed output { min-width: 38px; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
   .drive .dstate { text-align: center; min-height: 16px; color: var(--ink); font-weight: 600; }
@@ -714,7 +716,7 @@
     <canvas id="cv" tabindex="0" aria-label="Vue du lidar"></canvas>
     <div class="hud" id="hud" hidden></div>
     <div class="drive" id="drive" hidden role="group" aria-label="Pilotage du robot">
-      <div class="dh"><b>Pilotage</b><label class="check" title="Active les flèches du clavier, Maj, Q, D et Espace"><input type="checkbox" id="drvKeys" checked> Clavier</label></div>
+      <div class="dh"><b>Pilotage</b><span class="dopts"><label class="check" title="Un appui sur une touche ou un bouton = un seul petit déplacement, de durée réglable"><input type="checkbox" id="drvStep"> Pas à pas</label><label class="check" title="Active les flèches du clavier, Maj, Q, D et Espace"><input type="checkbox" id="drvKeys" checked> Clavier</label></span></div>
       <div class="pad">
         <button type="button" data-v="0,1,0" aria-label="Décaler à gauche" title="Décaler à gauche (Maj + ←  ou  Q)">⇦</button>
         <button type="button" data-v="1,0,0" aria-label="Avancer" title="Avancer (↑)">▲</button>
@@ -727,8 +729,9 @@
         <span></span>
       </div>
       <label class="dspeed" title="Vitesse des moteurs. Si les roues ne démarrent pas, augmente-la."><span>Vitesse</span><input type="range" id="drvSpeed" min="20" max="100" step="5" value="70" aria-label="Vitesse des moteurs"><output id="drvSpeedVal">70 %</output></label>
+      <label class="dspeed" id="drvMsRow" hidden title="Durée d'un pas : plus c'est court, plus le robot avance peu à chaque appui."><span>Durée du pas</span><input type="range" id="drvMs" min="50" max="600" step="25" value="150" aria-label="Durée d'un pas en millisecondes"><output id="drvMsVal">150 ms</output></label>
       <div class="dstate" id="drvState" aria-live="polite">Arrêt</div>
-      <div class="dhint">← → tourner · Maj + ← → décaler · Espace arrêt. Le robot s'arrête seul dès que la commande cesse.</div>
+      <div class="dhint" id="drvHint">← → tourner · Maj + ← → décaler · Espace arrêt. Le robot s'arrête seul dès que la commande cesse.</div>
     </div>
     <div class="coords" id="footRight"></div>
     <div class="empty" id="empty" hidden></div>
@@ -2535,17 +2538,34 @@ function wsMessage(data) {
    Répétées toutes les 100 ms tant qu'une touche est tenue ; le sketch s'arrête seul si elles cessent. */
 const drive = { keys: new Set(), ignore: new Set(), shift: false, pad: [0, 0, 0], last: 'S' };   // ignore : touches tenues pendant un arrêt, sans effet jusqu'au relâchement
 const driveReady = () => !!(state.ws && state.ws.readyState === 1);
+const clamp1 = v => Math.max(-1, Math.min(1, v));
+function keysVec(k, shift) {          // touches → [vx, vy, w]
+  let vx = (k.has('ArrowUp') ? 1 : 0) - (k.has('ArrowDown') ? 1 : 0), vy = 0, w = 0;
+  const side = (k.has('ArrowLeft') ? 1 : 0) - (k.has('ArrowRight') ? 1 : 0);   // + = gauche
+  if (shift) vy = side; else w = side;
+  vy += (k.has('q') ? 1 : 0) - (k.has('d') ? 1 : 0);
+  return [clamp1(vx), clamp1(vy), clamp1(w)];
+}
+const stepMode = () => $('drvStep').checked;
+const stepMs = () => Math.max(50, Math.min(600, Math.round(Number($('drvMs').value) || 200)));
 function driveVec() {
-  const k = drive.keys; let vx = 0, vy = 0, w = 0;
-  if ($('drvKeys').checked) {
-    vx = (k.has('ArrowUp') ? 1 : 0) - (k.has('ArrowDown') ? 1 : 0);
-    const side = (k.has('ArrowLeft') ? 1 : 0) - (k.has('ArrowRight') ? 1 : 0);   // + = gauche
-    if (drive.shift) vy = side; else w = side;
-    vy += (k.has('q') ? 1 : 0) - (k.has('d') ? 1 : 0);
-  }
-  vx += drive.pad[0]; vy += drive.pad[1]; w += drive.pad[2];
-  const c = v => Math.max(-1, Math.min(1, v));
-  return [c(vx), c(vy), c(w)];
+  let v = [0, 0, 0];
+  if ($('drvKeys').checked && !stepMode()) v = keysVec(drive.keys, drive.shift);
+  if (!stepMode()) v = [v[0] + drive.pad[0], v[1] + drive.pad[1], v[2] + drive.pad[2]];
+  return v.map(clamp1);
+}
+/* Pas à pas : une touche (ou un clic) = un seul petit déplacement, de durée fixe, que l'ESP32 arrête lui-même */
+let stepFlash = 0;
+function driveStep(v) {
+  if (!driveReady() || !v.some(x => x !== 0)) return;
+  try { state.ws.send(`P,${v[0]},${v[1]},${v[2]},${driveSpeed()},${stepMs()}`); } catch (_) { return; }
+  $('drvState').textContent = 'Pas : ' + driveLabel(v).toLowerCase();
+  stepFlash = Date.now() + stepMs();
+  document.querySelectorAll('#drive .pad button[data-v]').forEach(b => {
+    const bv = b.dataset.v.split(',').map(Number);
+    b.dataset.on = String(bv.some((x, i) => x !== 0 && x === v[i]));
+  });
+  setTimeout(() => { if (Date.now() >= stepFlash) { document.querySelectorAll('#drive .pad button[data-v]').forEach(b => { b.dataset.on = 'false'; }); $('drvState').textContent = 'Arrêt'; } }, stepMs() + 20);
 }
 const driveSpeed = () => Math.max(10, Math.min(100, Math.round(Number($('drvSpeed').value) || 70)));
 function driveLabel(v) {
@@ -2560,6 +2580,10 @@ function driveTick() {
   $('drive').hidden = !show;
   const v = show ? driveVec() : [0, 0, 0], moving = v.some(x => x !== 0);
   const cmd = moving ? `D,${v[0]},${v[1]},${v[2]},${driveSpeed()}` : 'S';
+  if (stepMode() && !moving) {        // pas à pas : les pas partent d'un coup (driveStep) ; ici seulement un S de sécurité au changement de mode
+    if (drive.last !== 'S' && driveReady()) { try { state.ws.send('S'); } catch (_) { /* idem */ } }
+    drive.last = 'S'; return;
+  }
   if (moving || drive.last !== 'S') { if (driveReady()) { try { state.ws.send(cmd); } catch (_) { /* liaison coupée : le robot s'arrête seul */ } } }
   drive.last = cmd;
   $('drvState').textContent = driveLabel(v);
@@ -2580,6 +2604,11 @@ addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (k !== 'Shift') e.preventDefault();
   drive.shift = e.shiftKey;
+  if (stepMode()) {                   // un appui = un pas ; garder la touche enfoncée n'en refait pas
+    if (k === ' ') { try { if (driveReady()) state.ws.send('S'); } catch (_) { /* idem */ } }
+    else if (k !== 'Shift' && !e.repeat) driveStep(keysVec(new Set([k]), e.shiftKey));
+    return;
+  }
   if (k === ' ') { drive.keys.forEach(x => drive.ignore.add(x)); drive.keys.clear(); drive.pad = [0, 0, 0]; }
   else if (k !== 'Shift' && !drive.ignore.has(k)) drive.keys.add(k);
   driveTick();
@@ -2594,11 +2623,22 @@ addEventListener('pagehide', driveStopAll);
 document.addEventListener('visibilitychange', () => { if (document.hidden) driveStopAll(); });
 $('drvKeys').addEventListener('change', () => { $('drvKeys').blur(); driveStopAll(); });
 $('drvSpeed').addEventListener('input', () => { $('drvSpeedVal').textContent = driveSpeed() + ' %'; });
+$('drvMs').addEventListener('input', () => { $('drvMsVal').textContent = stepMs() + ' ms'; });
+$('drvMs').addEventListener('change', () => $('drvMs').blur());
+function applyStepUi() {
+  const on = stepMode();
+  $('drvMsRow').hidden = !on;
+  $('drvHint').textContent = on ? 'Un appui = un petit pas (← → tourner · Maj + ← → décaler · Espace arrêt). Le robot s’arrête seul à la fin du pas.'
+                                : '← → tourner · Maj + ← → décaler · Espace arrêt. Le robot s’arrête seul dès que la commande cesse.';
+}
+$('drvStep').addEventListener('change', () => { $('drvStep').blur(); driveStopAll(); applyStepUi(); });
+applyStepUi();
 $('drvSpeed').addEventListener('change', () => $('drvSpeed').blur());   // sinon les flèches déplaceraient le curseur
 document.querySelectorAll('#drive .pad button').forEach(b => {
   b.addEventListener('pointerdown', e => {
     e.preventDefault();
     if (b.dataset.stop) { driveStopAll(); return; }
+    if (stepMode()) { driveStep(b.dataset.v.split(',').map(Number)); return; }
     try { b.setPointerCapture(e.pointerId); } catch (_) { /* ignoré */ }
     drive.pad = b.dataset.v.split(',').map(Number); driveTick();
   });

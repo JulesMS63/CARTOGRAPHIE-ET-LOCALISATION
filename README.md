@@ -110,9 +110,13 @@ répétée toutes les 100 ms tant qu'une touche est tenue, et `S` pour arrêter.
 au changement d'onglet et à la déconnexion. Le sketch doit en plus s'arrêter seul si les ordres cessent (300 ms dans le sketch fourni).
 Le curseur **Vitesse** (v18) règle la vitesse des 4 roues : si les petits moteurs ne démarrent pas, il faut l'augmenter.
 
+**Pas à pas (v19)** : la case **Pas à pas** du pavé fait qu'un appui sur une touche (ou un clic) = **un seul petit déplacement** ; garder la touche enfoncée n'en refait pas.
+Le curseur **Durée du pas** (50 à 600 ms) règle la longueur d'un pas ; avec le curseur Vitesse, on dose l'avance à chaque appui. La page envoie `P,vx,vy,w,v,ms`
+et c'est l'ESP32 qui coupe les moteurs à la fin des `ms` millisecondes (30 à 1000), sans dépendre de la latence du Wi-Fi. **Espace** (ou ■) envoie `S`.
+
 #### Sketch ESP32 : `arduino/ESP32_Robot_WiFi_Pilotage/`
 
-Lidar en direct par WebSocket (port 81), réception des ordres `D,vx,vy,w,v` / `S`, arrêt automatique 300 ms sans ordre.
+Lidar en direct par WebSocket (port 81), réception des ordres `D,vx,vy,w,v` / `P,vx,vy,w,v,ms` / `S`, arrêt automatique 300 ms sans ordre.
 Les moteurs reçoivent le **PWM directement sur les 8 broches** (M1A = D5, M1B = D18, M2A = D19, M2B = D21, M3A = D2, M3B = D4, M4A = D16, M4B = D17 ;
 M1 avant droit, M2 avant gauche, M3 arrière gauche, M4 arrière droit). Les montages I2C (bibliothèque `MecanumCar_v2`, ou I2C plus lent) restent
 sélectionnables pour comparer. Le sketch n'est pas encore validé sur le robot : le sens de chaque moteur se règle avec les cases « inverser » de la page de test.

@@ -22,6 +22,8 @@
 //                   vy = 1 décaler à gauche, -1 décaler à droite
 //                   w  = 1 tourner à gauche, -1 tourner à droite
 //                   v  = vitesse en % (10 à 100), facultatif
+//   P,vx,vy,w,v,ms  un seul pas : mêmes ordres que D, pendant ms millisecondes (30 à 1000),
+//                   puis le robot s'arrête tout seul (pilotage « Pas à pas » de la page)
 //   S               arrêt
 // La page répète D,... toutes les 100 ms tant qu'une touche est tenue.
 // Si plus rien n'arrive pendant 300 ms (touche relâchée, Wi-Fi coupé), le robot s'arrête.
@@ -280,6 +282,17 @@ void traiterCommande(uint8_t* payload, size_t length) {
       essaiManuel = false;
       dernierOrdreMs = millis();
       piloter(vx, vy, w, pct);
+    }
+  } else if (buf[0] == 'P') {
+    // Pas à pas : P,vx,vy,w,vitesse%,durée_ms  ->  un seul petit déplacement, arrêté par l'ESP32 lui-même
+    int vx = 0, vy = 0, w = 0, pct = VITESSE_DEFAUT_PCT, ms = 150;
+    int lus = sscanf(buf, "P,%d,%d,%d,%d,%d", &vx, &vy, &w, &pct, &ms);
+    if (lus >= 3) {
+      if (ms < 30) ms = 30;
+      if (ms > 1000) ms = 1000;
+      piloter(vx, vy, w, pct);
+      essaiManuel = true;                // la boucle principale coupe les moteurs à la fin de la durée
+      essaiFinMs = millis() + ms;
     }
   }
 }
@@ -626,7 +639,7 @@ void loop() {
   // Fin d'un essai de la page de test (3 s sans nouvel ordre, ou durée demandée écoulée)
   if (essaiManuel && (int32_t)(millis() - essaiFinMs) >= 0) {
     arreterTout();
-    Serial.println("Page test : arret automatique");
+    Serial.println("Arret automatique (fin du pas ou de l'essai)");
   }
 
   // Arrêt automatique : plus d'ordre récent (touche relâchée, Wi-Fi coupé)
