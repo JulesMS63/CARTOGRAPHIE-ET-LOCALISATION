@@ -209,6 +209,7 @@
   .slamopts > summary { cursor: pointer; font-size: 13px; color: var(--muted); margin: 2px 0 8px; }
   .placereg { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--hair); border-radius: 10px; background: var(--canvas); }
   .placereg .lab { font-weight: 600; font-size: 13px; color: var(--ink); }
+  .drive #drvAuto { justify-self: stretch; }
   .drive .dopts { display: inline-flex; gap: 12px; }
   .drive .dspeed[hidden] { display: none; }
   .drive .dspeed input { width: 100%; min-width: 80px; margin: 0; }
@@ -798,8 +799,9 @@
       </div>
       <label class="dspeed" title="Vitesse des moteurs. Si les roues ne démarrent pas, augmente-la."><span>Vitesse</span><input type="range" id="drvSpeed" min="20" max="100" step="5" value="70" aria-label="Vitesse des moteurs"><output id="drvSpeedVal">70 %</output></label>
       <label class="dspeed" id="drvMsRow" hidden title="Durée d'un pas : plus c'est court, plus le robot avance peu à chaque appui."><span>Durée du pas</span><input type="range" id="drvMs" min="50" max="600" step="25" value="150" aria-label="Durée d'un pas en millisecondes"><output id="drvMsVal">150 ms</output></label>
+      <button type="button" class="btn sm" id="drvAuto" aria-pressed="false" title="Le robot avance seul avec son capteur ultrason monté sur servo : il s'arrête devant un obstacle, regarde à gauche et à droite, puis tourne vers le côté dégagé. Une touche ou un bouton du pavé reprend la main.">Pilotage automatique</button>
       <div class="dstate" id="drvState" aria-live="polite">Arrêt</div>
-      <div class="dhint" id="drvHint">← → tourner · Maj + ← → décaler · Espace arrêt. Le robot s'arrête seul dès que la commande cesse.</div>
+      <div class="dhint" id="drvHint">← → tourner · Maj + ← → décaler · Espace arrêt. Le robot s'arrête seul dès que la commande cesse. Une touche coupe le pilotage automatique.</div>
     </div>
     <div class="coords" id="footRight"></div>
     <div class="empty" id="empty" hidden></div>
@@ -2287,7 +2289,7 @@ const nextColor = () => scanColor(state.colorIdx++);
 const state = {
   scans: [], selected: -1, live: null, tab: 'live',
   view: { live: { cx: 0, cy: 0, s: 60, auto: true }, map: { cx: 3, cy: 2, s: 80 }, slam: { cx: 0, cy: 0, s: 80 } },
-  wipe: 0.5, gridStats: null,
+  wipe: 0.5, gridStats: null, auto: false, autoDist: null,
   grid: null, vmap: null, gridCanvas: null, refGrid: null, refSegs: null, queue: 0, counters: {},
   port: null, reader: null, readLoopPromise: null, connected: false, stop: false,
   connState: 'idle', portLabel: '', bytes: 0, gotScan: false, monText: '', monDirty: false, timers: [],
@@ -2587,6 +2589,7 @@ function wsOpen(url, tries) {
 }
 function wsMessage(data) {
   const txt = typeof data === 'string' ? data : wsDecoder.decode(data);
+  if (txt.startsWith('E,')) { wsEvent(txt.trim()); return; }       // événements du robot (mouvement, pilotage automatique), pas des données du lidar
   state.bytes += txt.length;
   state.monText = (state.monText + txt.slice(0, 200) + '\n').slice(-900); state.monDirty = true;
   const m = parseWsMessage(txt);
@@ -2598,6 +2601,22 @@ function wsMessage(data) {
   } else if (m.kind === 'invalide' && state.wsBad++ === 0) {
     setStatus('connStatus', 'Un message Wi-Fi est illisible (' + m.error + '). Ouvrez « Données reçues » pour le voir.', 'warn');
   }
+}
+
+/* Événements envoyés par le sketch : E,M (le robot bouge) · E,R (il s'est arrêté) · E,A,1 / E,A,0 (pilotage automatique) · E,D,cm (distance devant) */
+function wsEvent(t) {
+  const p = t.split(',');
+  if (p[1] === 'M') drive.busyUntil = Date.now() + 8000;                   // en route (E,R l'annule ; 8 s au plus si E,R se perd)
+  else if (p[1] === 'R') { drive.busyUntil = Date.now(); drive.moves++; }   // arrêté : le SLAM peut prendre un scan
+  else if (p[1] === 'A') { state.auto = p[2] === '1'; state.autoDist = null; if (!state.auto) drive.busyUntil = Math.min(drive.busyUntil, Date.now()); updateAutoUi(); }
+  else if (p[1] === 'D') { state.autoDist = parseInt(p[2], 10); if (state.auto && !drive.pad.some(Boolean) && !drive.keys.size) $('drvState').textContent = autoLabel(); }
+}
+const autoLabel = () => 'Automatique' + (state.autoDist != null && isFinite(state.autoDist) ? ` · devant ${state.autoDist >= 400 ? '> 4 m' : state.autoDist + ' cm'}` : '');
+function updateAutoUi() {
+  const b = $('drvAuto'); if (!b) return;
+  b.textContent = state.auto ? 'Arrêter l’automatique' : 'Pilotage automatique';
+  b.classList.toggle('primary', !state.auto); b.setAttribute('aria-pressed', String(!!state.auto));
+  if (!state.auto) $('drvState').textContent = 'Arrêt';
 }
 
 /* ---------- pilotage du robot par Wi-Fi ----------
@@ -2646,18 +2665,19 @@ function driveLabel(v) {
   return parts.length ? parts.join(' + ') : 'Arrêt';
 }
 function driveTick() {
+  if (state.auto && !driveReady()) { state.auto = false; state.autoDist = null; updateAutoUi(); }
   const show = driveReady() && (state.tab === 'live' || state.tab === 'slam');
   $('drive').hidden = !show;
   const v = show ? driveVec() : [0, 0, 0], moving = v.some(x => x !== 0);
   const cmd = moving ? `D,${v[0]},${v[1]},${v[2]},${driveSpeed()}` : 'S';
   if (stepMode() && !moving) {        // pas à pas : les pas partent d'un coup (driveStep) ; ici seulement un S de sécurité au changement de mode
     if (drive.last !== 'S' && driveReady()) { try { state.ws.send('S'); } catch (_) { /* idem */ } }
-    drive.last = 'S'; return;
+    drive.last = 'S'; if (state.auto) $('drvState').textContent = autoLabel(); return;
   }
   if (moving) { drive.busyUntil = Date.now() + 250; drive.moves++; }   // le SLAM attend que le robot soit arrêté
   if (moving || drive.last !== 'S') { if (driveReady()) { try { state.ws.send(cmd); } catch (_) { /* liaison coupée : le robot s'arrête seul */ } } }
   drive.last = cmd;
-  $('drvState').textContent = driveLabel(v);
+  $('drvState').textContent = state.auto && !moving ? autoLabel() : driveLabel(v);
   document.querySelectorAll('#drive .pad button[data-v]').forEach(b => {
     const bv = b.dataset.v.split(',').map(Number);
     b.dataset.on = String(moving && bv.some((x, i) => x !== 0 && x === v[i]));
@@ -2693,14 +2713,19 @@ addEventListener('blur', driveStopAll);
 addEventListener('pagehide', driveStopAll);
 document.addEventListener('visibilitychange', () => { if (document.hidden) driveStopAll(); });
 $('drvKeys').addEventListener('change', () => { $('drvKeys').blur(); driveStopAll(); });
+$('drvAuto').addEventListener('click', () => {
+  if (!driveReady()) return;
+  try { state.ws.send(state.auto ? 'A,0' : `A,1,${driveSpeed()},0`); } catch (_) { /* liaison coupée */ }
+  $('drvAuto').blur();
+});
 $('drvSpeed').addEventListener('input', () => { $('drvSpeedVal').textContent = driveSpeed() + ' %'; });
 $('drvMs').addEventListener('input', () => { $('drvMsVal').textContent = stepMs() + ' ms'; });
 $('drvMs').addEventListener('change', () => $('drvMs').blur());
 function applyStepUi() {
   const on = stepMode();
   $('drvMsRow').hidden = !on;
-  $('drvHint').textContent = on ? 'Un appui = un petit pas (← → tourner · Maj + ← → décaler · Espace arrêt). Le robot s’arrête seul à la fin du pas.'
-                                : '← → tourner · Maj + ← → décaler · Espace arrêt. Le robot s’arrête seul dès que la commande cesse.';
+  $('drvHint').textContent = on ? 'Un appui = un petit pas (← → tourner · Maj + ← → décaler · Espace arrêt). Le robot s’arrête seul à la fin du pas. Une touche coupe le pilotage automatique.'
+                                : '← → tourner · Maj + ← → décaler · Espace arrêt. Le robot s’arrête seul dès que la commande cesse. Une touche coupe le pilotage automatique.';
 }
 $('drvStep').addEventListener('change', () => { $('drvStep').blur(); driveStopAll(); applyStepUi(); });
 applyStepUi();

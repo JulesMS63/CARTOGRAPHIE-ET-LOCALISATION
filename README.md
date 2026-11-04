@@ -123,6 +123,19 @@ Le premier scan définit l'origine ; si des scans existent déjà, le SLAM conti
 le robot n'a presque pas bougé (« Garder si bougé de », 3 cm) est ignoré ; un recalage peu sûr est signalé. Boutons : **Scanner maintenant**, **Annuler le dernier scan**, **Recommencer**, **Voir la carte**.
 Autres déclencheurs (Réglages) : toutes les N secondes, ou seulement à la demande. Pendant le SLAM, la grille et la carte vectorielle ne sont refaites qu'en quittant l'onglet.
 
+### Pilotage automatique (capteur ultrason + servo)
+
+Matériel : HC-SR04 (TRIG = D23, ECHO = D22, 5 V) et micro servo 9 g sur D26 (5 V), le servo porte le capteur (90° = droit devant).
+**Pont diviseur sur ECHO** (1 kΩ entre l'écho et D22, 2 kΩ entre D22 et GND) : l'écho sort en 5 V, l'ESP32 supporte 3,3 V.
+Bouton **Pilotage automatique** du pavé (ou `A,1,v,pause` / `A,0` sur le WebSocket, touche `a` au moniteur série) ; une touche ou un bouton du pavé reprend la main, ainsi qu'une déconnexion de la page.
+
+Algorithme (dans le sketch, sans `delay()`, le temps d'écho est relevé par interruption) : il avance par segments de 0,9 s en ralentissant sous 70 cm, s'arrête sous 30 cm ou à la fin d'un segment,
+regarde à gauche puis à droite avec le servo (±55°, médiane de 3 mesures). Obstacle devant : il tourne vers le côté le plus dégagé jusqu'à ce que le devant soit libre à 55 cm
+(il recule 0,5 s si les deux côtés sont à moins de 25 cm). Devant libre mais un mur à moins de 35 cm sur un côté : il glisse sur le côté (roues mecanum) pour s'en écarter.
+Il ne roule jamais sans réponse du capteur et abandonne après 4 s de silence (capteur débranché). Constantes en tête du bloc : distances, angles du servo, `SERVO_SENS_GAUCHE` (à passer à −1 si le servo regarde du mauvais côté).
+Le sketch prévient la page (`E,M` il bouge, `E,R` il est arrêté, `E,D,cm` distance devant) : avec le **SLAM** en marche, un scan est pris à chaque arrêt de l'automate.
+Limite : un capteur ultrason ne voit pas bien une surface très inclinée ou molle, et regarde un seul faisceau.
+
 **Placer les scans** : « Recaler le scan choisi » (comparé au scan juste avant) et « Recaler tous à la suite » refont le recalage par rapport aux scans précédents (même moteur que Localisation › Scan à scan, qui garde les autres références et la recherche « Partout »).
 Les étapes « Grille d'occupation 2D » et « Régler les cartes » ont été retirées du menu (l'onglet Grille 2D et les valeurs par défaut des cartes restent).
 Espace arrête le robot sans plus déclencher une capture de scan.
