@@ -4557,7 +4557,7 @@ function slamStart(auto = false) {
   const last = state.scans[state.scans.length - 1];
   slam.stack = [];
   if (last) { trackerStep(slam.tr, cleanOf(last), { ...last.pose }); slam.last = { ...last.pose }; } else slam.last = null;   // on continue à la suite du dernier scan
-  slam.kf = null; slam.dropped = 0; if (last) slamKalmanInit(last.pose);
+  slam.kf = null; slam.dropped = 0; slam.noRot = false; slam.noRun = false; slam.stillKind = ''; if (last) slamKalmanInit(last.pose);
   slam.on = true; slam.moves = drive.moves; slam.lastCap = Date.now(); slam.startedAt = Date.now(); slam.lostRun = 0;
   slam.auto = auto && driveReady(); slamPlanReset();
   slam.timer = setInterval(slamLoop, 150);
@@ -4880,7 +4880,7 @@ function slamStepFeedback(pose) {                              // le robot a bou
   const st = slam.step; if (!st) return; slam.step = null;
   if (st.type === 'rot') {                                     // rotation sur place : on compare au sens demandé et on règle la vitesse de rotation
     const dth = wrapDeg(pose.th - st.th0), sgn = st.vx === 0 && st.vy === 0 ? st.w : 0;
-    if (Math.abs(dth) < 2) { slam.still++; slam.kw = Math.max(0.1, slam.kw * 0.75); return; }
+    if (Math.abs(dth) < 2) { slam.still++; slam.stillKind = 'rot'; slam.kw = Math.max(0.1, slam.kw * 0.55); return; }   // il n'a pas tourné : le pas suivant sera plus long
     slam.still = 0;
     if (Math.abs(dth) > 3) slam.kw = Math.min(6, Math.max(0.1, 0.6 * slam.kw + 0.4 * Math.abs(dth) / (st.ms / 1000) / st.pct));
     if (st.want) { if (dth * sgn < -2) slam.wrongDir++; else if (dth * sgn > 5) slam.wrongDir = 0; }
@@ -4888,7 +4888,7 @@ function slamStepFeedback(pose) {                              // le robot a bou
   }
   const dx = pose.x - st.x0, dy = pose.y - st.y0, m = Math.hypot(dx, dy), c = Math.cos(-st.th0 * D2R), s = Math.sin(-st.th0 * D2R);
   const mx = c * dx - s * dy, my = s * dx + c * dy;           // déplacement mesuré, dans le repère du robot au départ du pas
-  if (m < 0.02) { slam.still++; const key = st.diag ? 'diag' : 'axis'; slam.kv[key] = Math.max(0.0008, slam.kv[key] * 0.75); return; }   // il n'a pas bougé : on suppose le robot plus lent, le pas suivant sera plus long
+  if (m < 0.02) { slam.still++; slam.stillKind = st.run ? 'run' : 'move'; const key = st.diag ? 'diag' : 'axis'; slam.kv[key] = Math.max(0.0008, slam.kv[key] * 0.75); return; }   // il n'a pas bougé : on suppose le robot plus lent, le pas suivant sera plus long
   slam.still = 0;
   if (m > 0.03) { const key = st.diag ? 'diag' : 'axis', kvn = m / (st.ms / 1000) / st.pct; slam.kv[key] = Math.min(0.012, Math.max(0.0008, 0.6 * slam.kv[key] + 0.4 * kvn)); }
   if (m > 0.05) { const cosang = (mx * st.cx + my * st.cy) / m; if (cosang < -0.2) slam.wrongDir++; else if (cosang > 0.5) slam.wrongDir = 0; }
@@ -4929,7 +4929,7 @@ function slamStraightLen(G, dt, cur, ds, fresh, cfg) {          // plus longue l
 function slamStartRun(L, cur, pct, cfg) {
   const v = slam.kv.axis * pct, dur = Math.min(7000, Math.round(L / v * 1000));
   slam.run = { t0: Date.now(), dur, pct, wc: cfg.infl * 0.85, stop: cfg.infl + 0.1 };
-  slam.step = { x0: cur.x, y0: cur.y, th0: cur.th, ms: dur, pct, type: 'move', vx: 1, vy: 0, w: 0, diag: false, cx: 1, cy: 0 };
+  slam.step = { x0: cur.x, y0: cur.y, th0: cur.th, ms: dur, pct, type: 'move', vx: 1, vy: 0, w: 0, diag: false, cx: 1, cy: 0, run: true };
   slam.lastMove = { ...slam.step, undone: false };
   slamSend(`D,1,0,0,${pct}`); drive.busyUntil = Date.now() + 250;
   $('drvState').textContent = 'Auto : avance';
@@ -4963,6 +4963,8 @@ function slamPlanStep() {
   if (!slam.on || !slam.auto) return;
   if (!driveReady()) { slamAutoStop('Le lien Wi-Fi du robot est coupé : exploration arrêtée.', 'err'); return; }
   if (slam.wrongDir >= 2) { slamAutoStop('Le robot ne part pas dans le sens commandé (avant ↔ arrière ou gauche ↔ droite inversés entre le lidar et les roues). Exploration arrêtée : vérifie le montage du lidar (0° = avant du robot) et le sens des moteurs.', 'err'); return; }
+  if (slam.still >= 3 && slam.stillKind === 'rot' && !slam.noRot) { slam.noRot = true; slam.still = 0; slamSay('Le robot ne tourne pas sur place : retour aux pas latéraux (le robot garde son cap).', 'warn'); }
+  else if (slam.still >= 3 && slam.stillKind === 'run' && !slam.noRun) { slam.noRun = true; slam.still = 0; slamSay('Le robot n’avance pas en ligne droite : retour aux petits pas.', 'warn'); }
   if (slam.still >= 3) { slamAutoStop('Le robot ne bouge plus (3 pas sans déplacement) : il est coincé ou les roues patinent. Dégage-le puis clique « Passer en automatique ».', 'warn'); return; }
   if (slam.lastOutcome === 'aucun') { slamCapture(); return; }
   const cfg = slamAutoNums(), pct = driveSpeed();
@@ -5032,16 +5034,16 @@ function slamPlanStep() {
   const what = `${tgt.kind === 'front' ? 'vers une zone inconnue' : tgt.kind === 'home' ? 'retour à la base' : 'vers un nouveau point de vue'}, à ${fmt(ds * AGC, 1)} m`;
   let nearest = 3; for (let i = 0; i < fresh.ranges.length; i++) if (fresh.ranges[i] >= 0.12 && fresh.ranges[i] < nearest) nearest = fresh.ranges[i];
   const tight = nearest < cfg.infl + 0.4;                      // zone resserrée : un obstacle à moins de 65 cm tout autour
-  if (!tight) {
+  if (!tight && !slam.noRot) {
     const wp = slamPathAhead(G, dt, start, tgt.i, 0.8), delta = wrapDeg(Math.atan2(G.cy(wp) - cur.y, G.cx(wp) - cur.x) / D2R - cur.th);
     if (Math.abs(delta) > 15) {                                // d'abord on se tourne vers la destination
       const sgn = delta > 0 ? 1 : -1, deg = Math.min(Math.abs(delta), 35);
-      let ms = Math.round(Math.min(900, Math.max(100, deg / (slam.kw * pct) * 1000))); if (slam.nSteps <= 2) ms = Math.min(ms, 200);
+      let ms = Math.round(Math.min(900, Math.max(100, deg / (slam.kw * pct) * 1000))); if (slam.nSteps <= 2 && !slam.still) ms = Math.min(ms, 200); else if (slam.still) ms = Math.min(900, Math.round(ms * (1 + 0.5 * slam.still)));
       slam.stuck = 0; slamSendStep(0, 0, sgn, ms, { want: sgn * deg });
       slamSay(`Pas ${slam.nSteps} : il se tourne de ${Math.round(Math.abs(delta))}° ${sgn > 0 ? 'vers la gauche' : 'vers la droite'} (${what}).`, 'ok'); slamUi(); draw(); return;
     }
     let L = slamStraightLen(G, dt, cur, ds, fresh, cfg); if (slam.nSteps <= 2) L = Math.min(L, 0.2);
-    if (L >= 0.2) {                                            // puis tout droit, sur les 4 roues
+    if (L >= 0.2 && !slam.noRun) {                             // puis tout droit, sur les 4 roues
       slam.stuck = 0; slamStartRun(L, cur, pct, cfg);
       slamSay(`Pas ${slam.nSteps} : tout droit sur ${fmt(L, 1)} m (${what}).`, 'ok'); slamUi(); draw(); return;
     }
