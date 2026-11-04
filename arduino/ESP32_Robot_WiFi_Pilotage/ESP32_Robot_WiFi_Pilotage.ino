@@ -24,7 +24,10 @@
 //                   v  = vitesse en % (10 à 100), facultatif
 //   P,vx,vy,w,v,ms  un seul pas : mêmes ordres que D, pendant ms millisecondes (30 à 1000),
 //                   puis le robot s'arrête tout seul (pilotage « Pas à pas » de la page)
+//   A,1[,v[,pause]] pilotage automatique (capteur ultrason + servo) à la vitesse v %, avec une pause de
+//                   pause ms entre deux avances (0 = sans pause) ;  A,0 l'arrête. D, P ou S reprennent la main.
 //   S               arrêt
+//   Le sketch envoie aussi à la page : E,M (le robot bouge), E,R (il s'est arrêté), E,A,1/0 (auto marche/arrêt), E,D,cm (distance devant)
 // La page répète D,... toutes les 100 ms tant qu'une touche est tenue.
 // Si plus rien n'arrive pendant 300 ms (touche relâchée, Wi-Fi coupé), le robot s'arrête.
 //
@@ -268,12 +271,224 @@ void piloter(int vx, int vy, int w, int pct) {
   }
 }
 
+// ============================================================================
+// Capteur ultrason HC-SR04 monté sur un servo + pilotage automatique (aucun delay() bloquant)
+//   HC-SR04 : TRIG = D23, ECHO = D22, alimenté en 5 V.
+//   !! L'écho du HC-SR04 sort en 5 V alors que l'ESP32 supporte 3,3 V : mets un pont diviseur
+//      (1 kΩ entre ECHO et D22, 2 kΩ entre D22 et GND), sinon la broche s'abîme avec le temps.
+//   Servo 9 g : signal sur D26, alimenté en 5 V. Il porte le capteur : 90° = droit devant.
+// Utilisé uniquement par le pilotage automatique (commande « A » de la page, ou touche « a » au moniteur série).
+// ============================================================================
+const uint8_t PIN_TRIG  = 23;
+const uint8_t PIN_ECHO  = 22;
+const uint8_t PIN_SERVO = 26;
+
+const int SERVO_CENTRE = 90;             // degrés : le capteur regarde droit devant
+const int SERVO_COTE   = 55;             // écart pour regarder à gauche / à droite
+const int SERVO_SENS_GAUCHE = 1;         // mets -1 si, quand le robot « regarde à gauche », le servo regarde en réalité à droite
+const uint32_t SERVO_ATTENTE_MS = 400;   // temps laissé au servo pour arriver avant de mesurer
+
+const int DIST_RALENTIR_CM = 70;         // en dessous : le robot ralentit
+const int DIST_STOP_CM     = 30;         // en dessous : il s'arrête et regarde autour
+const int DIST_LIBRE_CM    = 55;         // il a fini de tourner quand le devant est dégagé au moins jusque-là
+const int DIST_BLOQUE_CM   = 25;         // si les deux côtés sont plus près que ça : il recule
+const int DIST_COTE_CM     = 35;         // un côté (regard à ±55°) plus près que ça : il s'écarte en glissant sur le côté
+const int PCT_MINI_AUTO    = 40;         // vitesse minimale quand il ralentit
+const uint32_t SEGMENT_MS   = 900;       // durée d'une avance : puis il s'arrête et regarde à gauche et à droite
+const uint32_t ESQUIVE_MS   = 450;       // durée du glissement sur le côté
+const uint32_t RECULE_MS    = 500;
+const uint32_t TOURNE_MAX_MS = 3500;     // si le devant ne se dégage pas : il abandonne ce virage
+
+// --- Servo (PWM 50 Hz, 14 bits) ---
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  #define SERVO_ATTACH() ledcAttach(PIN_SERVO, 50, 14)
+  #define SERVO_WRITE(d) ledcWrite(PIN_SERVO, d)
+#else
+  #define SERVO_ATTACH() do { ledcSetup(8, 50, 14); ledcAttachPin(PIN_SERVO, 8); } while (0)
+  #define SERVO_WRITE(d) ledcWrite(8, d)
+#endif
+int servoAngle = -1;
+uint32_t servoPretMs = 0;
+void servoVers(int deg) {
+  deg = constrain(deg, 0, 180);
+  if (deg == servoAngle) return;
+  uint32_t us = 500 + (uint32_t)deg * 2000 / 180;          // 0° = 0,5 ms ... 180° = 2,5 ms
+  SERVO_WRITE(us * 16384UL / 20000UL);
+  servoAngle = deg;
+  servoPretMs = millis() + SERVO_ATTENTE_MS;
+}
+bool servoPret() { return (int32_t)(millis() - servoPretMs) >= 0; }
+
+// --- HC-SR04 : mesure sans attente (le temps d'écho est relevé par interruption) ---
+volatile uint32_t echoDebutUs = 0, echoFinUs = 0;
+volatile bool echoFini = false;
+void IRAM_ATTR echoIsr() {
+  if (digitalRead(PIN_ECHO)) echoDebutUs = micros();
+  else { echoFinUs = micros(); echoFini = true; }
+}
+float distBrute[3] = {400, 400, 400};    // 3 dernières mesures (cm), 400 = rien vu
+int distIdx = 0;
+uint32_t mesureSeq = 0;                  // numéro de la dernière mesure
+uint32_t distMs = 0;                     // quand
+uint32_t dernierEchoValideMs = 0;
+bool mesureEnCours = false;
+uint32_t trigMs = 0;
+uint32_t mesureJusquaMs = 0;             // mesures aussi demandées par la touche « u » du moniteur série
+
+float distanceCm() {                     // médiane des 3 dernières mesures
+  float a = distBrute[0], b = distBrute[1], c = distBrute[2];
+  return max(min(a, b), min(max(a, b), c));
+}
+bool distanceFraiche(uint32_t ms) { return millis() - distMs < ms; }
+
+void ultrasonSuivre(bool actif) {
+  uint32_t t = millis();
+  if (mesureEnCours) {
+    bool fini = echoFini;
+    if (fini || t - trigMs > 35) {       // 35 ms : plus rien à attendre (au-delà de ~5 m)
+      float cm = 400;
+      if (fini) {
+        float c = (float)(echoFinUs - echoDebutUs) / 58.0f;
+        if (c >= 2 && c <= 400) { cm = c; dernierEchoValideMs = t; }
+      }
+      distBrute[distIdx] = cm; distIdx = (distIdx + 1) % 3;
+      distMs = t; mesureSeq++; mesureEnCours = false;
+    }
+  } else if (actif && t - trigMs >= 60) {
+    echoFini = false;
+    digitalWrite(PIN_TRIG, HIGH); delayMicroseconds(10); digitalWrite(PIN_TRIG, LOW);   // impulsion de 10 µs demandée par le capteur
+    mesureEnCours = true; trigMs = t;
+  }
+}
+
+// --- Pilotage automatique ---
+enum { A_OFF, A_AVANCE, A_PAUSE, A_REGARDE_G, A_REGARDE_D, A_TOURNE, A_RECULE, A_ESQUIVE };
+int autoEtat = A_OFF;
+int autoPct = 55;                        // vitesse de croisière (%)
+uint32_t autoPauseMs = 0;                // 0 = avance sans s'arrêter ; sinon : pause entre deux avances (pour que le SLAM prenne un scan)
+uint32_t autoDebutMs = 0, autoSeq0 = 0, autoDistMsgMs = 0, autoDemarreMs = 0;
+float distG = 400, distD = 400, distF = 400;    // distances relevées à gauche, à droite et devant (cm)
+int autoEsquive = 0;                     // sens du glissement latéral (+1 gauche, -1 droite)
+int autoSens = 1;                        // sens du virage en cours (+1 gauche, -1 droite)
+int autoEchecs = 0;
+
+void evenement(const char* e) { webSocket.broadcastTXT(e); }   // « E,... » : lu par la page, pas par le lidar
+bool autoActif() { return autoEtat != A_OFF; }
+void autoPhase(int e) { autoEtat = e; autoDebutMs = millis(); autoSeq0 = mesureSeq; }
+void autoRoule(int vx, int vy, int w, int pct) {
+  if (!enMouvement()) evenement("E,M");
+  piloter(vx, vy, w, pct);
+}
+void autoStop() {
+  if (enMouvement()) { arreter(); evenement("E,R"); }
+}
+void autoArreter(const char* raison) {
+  if (autoEtat == A_OFF) return;
+  autoEtat = A_OFF;
+  bool bougeait = enMouvement();
+  arreter();
+  servoVers(SERVO_CENTRE);
+  Serial.printf("Pilotage automatique arrete : %s\n", raison);
+  evenement("E,A,0");
+  if (bougeait) evenement("E,R");
+}
+void autoDemarrer(int pct, int pauseMs) {
+  if (autoEtat != A_OFF) return;
+  autoPct = constrain(pct, 40, 100);
+  autoPauseMs = (uint32_t)constrain(pauseMs, 0, 10000);
+  autoEchecs = 0;
+  autoDemarreMs = millis();
+  servoVers(SERVO_CENTRE);
+  autoPhase(A_AVANCE);
+  Serial.printf("Pilotage automatique : vitesse %d %%, pause %u ms\n", autoPct, (unsigned)autoPauseMs);
+  evenement("E,A,1");
+}
+
+// Appelée à chaque tour de loop() : ne bloque jamais
+void automate() {
+  ultrasonSuivre(autoActif() || millis() < mesureJusquaMs);
+  if (autoEtat == A_OFF) return;
+  dernierOrdreMs = millis();             // l'automate est lui-même la source des ordres : le coupe-circuit de 300 ms ne s'applique pas
+  uint32_t t = millis(), dt = t - autoDebutMs;
+
+  if (t - max(dernierEchoValideMs, autoDemarreMs) > 4000) { autoArreter("le capteur ultrason ne voit rien (branchement TRIG D23 / ECHO D22 ? alimentation 5 V ?)"); return; }
+  if (t - autoDistMsgMs > 400) {         // distance devant, affichée par la page
+    autoDistMsgMs = t;
+    char m[24]; snprintf(m, sizeof(m), "E,D,%d", (int)distanceCm());
+    evenement(m);
+  }
+
+  switch (autoEtat) {
+    case A_AVANCE: {
+      servoVers(SERVO_CENTRE);
+      bool echoVu = dernierEchoValideMs >= autoDemarreMs && t - dernierEchoValideMs < 1500;   // le capteur a répondu récemment
+      if (!servoPret() || !distanceFraiche(250) || !echoVu) { autoStop(); break; }     // pas de mesure fiable : on ne roule pas à l'aveugle
+      float d = distanceCm();
+      if (d < DIST_STOP_CM) { autoStop(); distF = d; Serial.printf("Obstacle a %d cm : je regarde autour\n", (int)d); autoPhase(A_REGARDE_G); break; }
+      if (dt >= SEGMENT_MS) { autoStop(); distF = d; autoPhase(A_REGARDE_G); break; }       // toutes les ~0,9 s : arrêt et regard sur les côtés (le capteur ne voit pas un mur longé de près)
+      int pct = autoPct;
+      if (d < DIST_RALENTIR_CM) pct = PCT_MINI_AUTO + (autoPct - PCT_MINI_AUTO) * (int)(d - DIST_STOP_CM) / (DIST_RALENTIR_CM - DIST_STOP_CM);
+      pct = max(PCT_MINI_AUTO, min(autoPct, (pct / 10) * 10));             // par paliers de 10 % : pas de changement d'ordre à chaque mesure
+      autoRoule(1, 0, 0, pct);
+      break;
+    }
+    case A_PAUSE:
+      if (dt >= autoPauseMs) autoPhase(A_AVANCE);
+      break;
+    case A_REGARDE_G:
+    case A_REGARDE_D: {
+      bool gauche = autoEtat == A_REGARDE_G;
+      servoVers(SERVO_CENTRE + (gauche ? 1 : -1) * SERVO_SENS_GAUCHE * SERVO_COTE);
+      if (!servoPret()) { autoSeq0 = mesureSeq; break; }                  // on attend que le servo soit arrivé, puis 3 mesures neuves
+      if (mesureSeq < autoSeq0 + 3) break;
+      if (gauche) { distG = distanceCm(); autoPhase(A_REGARDE_D); break; }
+      distD = distanceCm();
+      Serial.printf("Libre : devant %d cm, gauche %d cm, droite %d cm\n", (int)distF, (int)distG, (int)distD);
+      if (distF >= DIST_STOP_CM) {                                         // devant dégagé : seulement s'écarter d'un mur trop proche sur un côté
+        bool g = distG < DIST_COTE_CM, d = distD < DIST_COTE_CM;
+        servoVers(SERVO_CENTRE);
+        if (g != d) { autoEsquive = g ? -1 : 1; autoPhase(A_ESQUIVE); }
+        else autoPhase(autoPauseMs > 0 ? A_PAUSE : A_AVANCE);
+        break;
+      }
+      if (max(distG, distD) < DIST_BLOQUE_CM) { if (++autoEchecs >= 4) { autoArreter("bloque de tous les cotes"); break; } autoPhase(A_RECULE); break; }
+      autoSens = distG >= distD ? 1 : -1;
+      servoVers(SERVO_CENTRE);
+      autoPhase(A_TOURNE);
+      break;
+    }
+    case A_TOURNE: {
+      servoVers(SERVO_CENTRE);
+      autoRoule(0, 0, autoSens, max(autoPct, 50));
+      if (!servoPret()) { autoSeq0 = mesureSeq; break; }
+      if (mesureSeq >= autoSeq0 + 3 && distanceCm() > DIST_LIBRE_CM) {
+        autoStop(); autoEchecs = 0; autoPhase(autoPauseMs > 0 ? A_PAUSE : A_AVANCE);
+      } else if (dt > TOURNE_MAX_MS) {
+        autoStop();
+        if (++autoEchecs >= 4) autoArreter("je n'arrive pas a me degager");
+        else autoPhase(A_RECULE);
+      }
+      break;
+    }
+    case A_ESQUIVE:
+      servoVers(SERVO_CENTRE);
+      autoRoule(0, autoEsquive, 0, max(autoPct, 50));
+      if (dt >= ESQUIVE_MS) { autoStop(); autoPhase(autoPauseMs > 0 ? A_PAUSE : A_AVANCE); }
+      break;
+    case A_RECULE:
+      servoVers(SERVO_CENTRE);
+      autoRoule(-1, 0, 0, max(autoPct, 50));
+      if (dt >= RECULE_MS) { autoStop(); autoPhase(A_REGARDE_G); }
+      break;
+  }
+}
+
 void traiterCommande(uint8_t* payload, size_t length) {
   char buf[48];
   size_t n = length < sizeof(buf) - 1 ? length : sizeof(buf) - 1;
   memcpy(buf, payload, n);
   buf[n] = 0;
-  if (buf[0] == 'S' || buf[0] == 'D' || buf[0] == 'P') testRoue = -1;   // un ordre de la page interrompt le test des roues
+  if (buf[0] == 'S' || buf[0] == 'D' || buf[0] == 'P') { testRoue = -1; autoArreter("la page a repris la main"); }   // un ordre de la page interrompt le test des roues et le pilotage automatique
 
   if (buf[0] == 'S') {
     if (enMouvement()) Serial.println("Ordre S : arret");
@@ -286,6 +501,12 @@ void traiterCommande(uint8_t* payload, size_t length) {
       dernierOrdreMs = millis();
       piloter(vx, vy, w, pct);
     }
+  } else if (buf[0] == 'A') {
+    // Pilotage automatique : A,1[,vitesse%[,pause_ms]]  démarre ;  A,0  arrête
+    int on = 0, pct = VITESSE_DEFAUT_PCT, pause = 0;
+    int lus = sscanf(buf, "A,%d,%d,%d", &on, &pct, &pause);
+    if (lus >= 1 && on) { testRoue = -1; autoDemarrer(pct, pause); }
+    else if (lus >= 1) autoArreter("arret demande");
   } else if (buf[0] == 'P') {
     // Pas à pas : P,vx,vy,w,vitesse%,durée_ms  ->  un seul petit déplacement, arrêté par l'ESP32 lui-même
     int vx = 0, vy = 0, w = 0, pct = VITESSE_DEFAUT_PCT, ms = 150;
@@ -309,6 +530,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
       break;
     case WStype_DISCONNECTED:
       Serial.printf("[%u] Page deconnectee\n", num);
+      autoArreter("page deconnectee");
       arreter();                         // plus personne ne pilote : on s'arrête
       break;
     case WStype_TEXT:
@@ -591,7 +813,9 @@ void commandeSerie() {
     char c = Serial.read();
     if (c == 't') testRouesDemarrer();
     else if (c == 'f') { Serial.println("Avance 1 s"); testRouesArreter(); piloter(1, 0, 0, 70); essaiManuel = true; essaiFinMs = millis() + 1000; }
-    else if (c == 'x') { Serial.println("Arret"); testRouesArreter(); arreter(); }
+    else if (c == 'x') { Serial.println("Arret"); testRouesArreter(); autoArreter("arret demande"); arreter(); }
+    else if (c == 'a') { testRouesArreter(); if (autoActif()) autoArreter("arret demande"); else autoDemarrer(VITESSE_DEFAUT_PCT, 0); }
+    else if (c == 'u') { mesureJusquaMs = millis() + 3000; Serial.println("Mesure de la distance pendant 3 s..."); }
     else if (c == 'i') scannerBroches();
   }
 }
@@ -600,6 +824,11 @@ void commandeSerie() {
 // Le Wi-Fi démarre EN PREMIER pour que le réseau « Robot-LiDAR » existe quoi qu'il arrive.
 void setup() {
   if (modeMoteur == MODE_GPIO) gpioActiver(true);   // moteurs à l'arrêt (PWM à 0) dès le démarrage
+  pinMode(PIN_TRIG, OUTPUT); digitalWrite(PIN_TRIG, LOW);
+  pinMode(PIN_ECHO, INPUT);
+  attachInterrupt(digitalPinToInterrupt(PIN_ECHO), echoIsr, CHANGE);
+  SERVO_ATTACH();
+  servoVers(SERVO_CENTRE);
   memoire.begin("robot", false);
   uint8_t masque = memoire.getUChar("sens2", 0x06);   // 0x06 = M2 et M3 inversés (réglage par défaut)
   for (int i = 0; i < 4; i++) sensMoteur[i] = (masque >> i) & 1 ? -1 : 1;
@@ -643,7 +872,7 @@ void setup() {
     // la carte moteur a besoin d'une seconde après la mise sous tension : sa vérification se fait dans loop(), sans bloquer
   }
   Serial.printf("Sens des moteurs (page de test, « inverser ») : M1=%d M2=%d M3=%d M4=%d\n", sensMoteur[0], sensMoteur[1], sensMoteur[2], sensMoteur[3]);
-  Serial.println("Commandes serie : t = test des roues (robot souleve), f = avance 1 s, x = arret, i = chercher la carte (I2C)");
+  Serial.println("Commandes serie : t = test des roues (robot souleve), f = avance 1 s, x = arret, a = pilotage automatique on/off, u = distance du capteur, i = chercher la carte (I2C)");
 }
 
 void loop() {
@@ -651,6 +880,7 @@ void loop() {
   webSocket.loop();
   commandeSerie();
   testRouesSuivre();
+  automate();
 
   // Carte moteur en mode I2C : initialisation 1 s après le démarrage (sans delay)
   if (!carteInitFaite && modeMoteur != MODE_GPIO && millis() > 1000) {
