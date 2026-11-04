@@ -106,13 +106,22 @@ Boutons (à tenir appuyés) ou clavier (case **Clavier**, cochée par défaut) :
 **Espace** arrêt. Les flèches combinées donnent les diagonales (↑ + Maj + ←, etc.).
 
 Commandes envoyées par le même WebSocket que le lidar : `D,vx,vy,w,v` (vx > 0 avance, vy > 0 décale à gauche, w > 0 tourne à gauche ; −1, 0 ou 1 ; v = vitesse en %, curseur **Vitesse**, 20 à 100),
-répétée toutes les 100 ms tant qu'une touche est tenue, et `S` pour arrêter. Un arrêt est aussi envoyé au relâchement, à la perte de focus de la fenêtre,
-au changement d'onglet et à la déconnexion. Le sketch doit en plus s'arrêter seul si les ordres cessent (300 ms dans le sketch fourni).
+répétée toutes les 60 ms tant qu'une touche est tenue, et `S` pour arrêter. Un arrêt est aussi envoyé au relâchement, à la perte de focus de la fenêtre,
+au changement d'onglet et à la déconnexion. Le sketch doit en plus s'arrêter seul si les ordres cessent (250 ms dans le sketch fourni).
 Le curseur **Vitesse** (v18) règle la vitesse des 4 roues : si les petits moteurs ne démarrent pas, il faut l'augmenter.
 
 **Pas à pas (v19)** : la case **Pas à pas** du pavé fait qu'un appui sur une touche (ou un clic) = **un seul petit déplacement** ; garder la touche enfoncée n'en refait pas.
 Le curseur **Durée du pas** (50 à 600 ms) règle la longueur d'un pas ; avec le curseur Vitesse, on dose l'avance à chaque appui. La page envoie `P,vx,vy,w,v,ms`
 et c'est l'ESP32 qui coupe les moteurs à la fin des `ms` millisecondes (30 à 1000), sans dépendre de la latence du Wi-Fi. **Espace** (ou ■) envoie `S`.
+
+**Réactivité (v23)** : un tour de lidar fait ~15 Ko ; son envoi bloquait la boucle de l'ESP32 pendant que le Wi-Fi le prenait, donc les ordres arrivaient en retard et l'arrêt aussi
+(le robot continuait à rouler ou à tourner après le relâchement). Le sketch a maintenant :
+- un **minuteur matériel** (toutes les 10 ms, sans `delay()`) qui coupe les moteurs si le dernier ordre a plus de 250 ms (+ 100 ms) ou si la durée d'un pas `P` est écoulée, même si la boucle principale est bloquée ;
+- un **envoi du lidar adaptatif** : en roulant, 3 tours par seconde et sans l'intensité ; si un envoi dure plus de 40 ms (Wi-Fi lent), les suivants sont espacés de 3 fois cette durée ; dès que le robot s'arrête, le tour suivant part tout de suite (le SLAM l'attend) ;
+- `WiFi.setSleep(false)` (l'économie d'énergie du Wi-Fi ajoute des dizaines de ms) ;
+- une **rotation adoucie** : les ordres de rotation `D` et `P` sont multipliés par `ECHELLE_ROTATION` (0,5 ; 1,0 = pleine vitesse), la rotation étant bien plus vive que l'avance.
+La page n'empile plus d'ordres `D` périmés si la liaison est engorgée (l'arrêt `S` passe toujours) et affiche la **latence** sous le pavé : elle envoie `T,n` toutes les 1,5 s, le sketch répond `E,T,n` à ce seul client.
+Au-delà de 250 ms d'aller-retour, la page signale « Liaison lente » : rapproche-toi du robot, évite d'autres appareils sur le réseau Robot-LiDAR.
 
 ### SLAM automatique (v20)
 
@@ -134,7 +143,10 @@ La page décide, le sketch exécute : il suffit de la commande `P,vx,vy,w,v,ms` 
 3. un pas d'au plus 40 cm est choisi parmi les 8 directions (avant, arrière, côtés, diagonales, avec les roues mecanum : le robot garde son cap) : celle qui rapproche le plus de la cible, à condition que le lidar mesure assez de place devant dans cette direction (marge de 25 cm entre le lidar et l'obstacle) ;
 4. la durée du pas est ajustée sur le déplacement réellement mesuré (les deux premiers pas sont courts, 0,25 s).
 
-Le trajet prévu (pointillés) et la cible s'affichent sur la carte. L'exploration s'arrête seule : plus de zone ni de point de vue à voir (« Exploration terminée »), 80 scans, 10 minutes, 3 recalages ratés de suite
+**La base (v23)** : le premier scan du SLAM définit l'origine de la carte, et c'est la **base** du robot, son point de départ. Elle est marquée en permanence (maison orange « Base ») sur SLAM, Carte et Grille 2D, et la barre d'état de l'onglet SLAM donne la distance du robot à la base.
+En automatique, une fois la pièce scannée (plus de zone inconnue ni de point de vue à ajouter), ou quand une limite est atteinte (scans, durée), **le robot rentre à sa base** par un chemin libre, puis s'arrête à moins de 25 cm de la base (« Exploration terminée : … revenu à sa base (à 11 cm du départ) »). Réglage « Auto : revenir à la base à la fin » (Oui par défaut ; Non : arrêt direct à la fin ou à la limite). Le cap n'est pas rétabli : le robot garde son cap pendant l'exploration, l'écart est annoncé s'il dépasse 5°.
+
+Le trajet prévu (pointillés) et la cible s'affichent sur la carte. L'exploration s'arrête seule : retour à la base une fois plus de zone ni de point de vue à voir (« Exploration terminée »), 80 scans, 10 minutes (le robot rentre d'abord à sa base), 3 recalages ratés de suite
 (le robot revient d'un pas, puis s'arrête s'il est perdu), 3 pas sans déplacement (robot coincé), lien Wi-Fi coupé, ou ordres incohérents avec ce que voit le lidar (avant ↔ arrière ou gauche ↔ droite inversés : lidar monté tourné, moteurs inversés).
 Une touche du pavé, le bouton ■ ou **Reprendre la main** rendent la main (le SLAM continue en manuel) ; **Passer en automatique** reprend l'exploration.
 Réglages (Réglages du SLAM) : pas maximal, marge autour du robot, écart entre points de vue, nombre de scans et durée maximale.

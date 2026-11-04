@@ -216,6 +216,7 @@
   .drive .dspeed output { min-width: 38px; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
   .drive .dstate { text-align: center; min-height: 16px; color: var(--ink); font-weight: 600; }
   .drive .dhint { max-width: 176px; line-height: 1.35; }
+  .drive .dlat { text-align: center; max-width: 176px; font-size: 11px; color: var(--muted); } .drive .dlat.warn { color: var(--warn); } .drive .dlat.bad { color: var(--bad); font-weight: 600; }
   .coords { position: absolute; right: 14px; bottom: 12px; font-size: 12px; color: var(--muted); pointer-events: none; }
   .empty { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px; text-align: center; padding: 24px; }
   .empty[hidden] { display: none; }
@@ -427,6 +428,7 @@
               <div class="field"><label for="slamMaxMin">Auto : durée max (min)</label><input type="number" id="slamMaxMin" value="10" min="1" max="60" step="1"></div>
               <div class="field"><label for="slamAutoStep">Auto : pas maximal (cm)</label><input type="number" id="slamAutoStep" value="40" min="15" max="80" step="5"></div>
               <div class="field"><label for="slamAutoR">Auto : marge autour du robot (cm)</label><input type="number" id="slamAutoR" value="25" min="15" max="50" step="1"></div>
+              <div class="field"><label for="slamHome">Auto : revenir à la base à la fin</label><select id="slamHome"><option value="yes">Oui</option><option value="no">Non</option></select></div>
               <div class="field"><label for="slamCover">Auto : écart entre points de vue (m, 0 = aucun)</label><input type="number" id="slamCover" value="2"  min="0" max="5" step="0.1"></div>
             </div>
             <p class="hint">En automatique, la vitesse est celle du curseur du pavé et chaque pas est déplacé dans l'une des 8 directions (le robot garde son cap) ; la durée des pas s'ajuste sur le déplacement mesuré par le lidar. La marge est la distance gardée entre le lidar et les obstacles. Un scan pris alors que le robot n'a presque pas bougé (moins que « Garder si bougé ») est ignoré. « Carte locale » : nombre de derniers scans fiables servant de référence (1 = le scan précédent seul).</p>
@@ -807,6 +809,7 @@
       <label class="dspeed" id="drvMsRow" hidden title="Durée d'un pas : plus c'est court, plus le robot avance peu à chaque appui."><span>Durée du pas</span><input type="range" id="drvMs" min="50" max="600" step="25" value="150" aria-label="Durée d'un pas en millisecondes"><output id="drvMsVal">150 ms</output></label>
       <button type="button" class="btn sm" id="drvAuto" aria-pressed="false" title="Le robot avance seul avec son capteur ultrason monté sur servo : il s'arrête devant un obstacle, regarde à gauche et à droite, puis tourne vers le côté dégagé. Une touche ou un bouton du pavé reprend la main.">Pilotage automatique</button>
       <div class="dstate" id="drvState" aria-live="polite">Arrêt</div>
+      <div class="dlat" id="drvLat" hidden></div>
       <div class="dhint" id="drvHint">← → tourner · Maj + ← → décaler · Espace arrêt. Le robot s'arrête seul dès que la commande cesse. Une touche coupe le pilotage automatique.</div>
     </div>
     <div class="coords" id="footRight"></div>
@@ -2293,7 +2296,7 @@ const scanColor = i => `hsl(${Math.round((220 + i * 137.508) % 360)} 78% 46%)`;
 const nextColor = () => scanColor(state.colorIdx++);
 
 const state = {
-  scans: [], selected: -1, live: null, tab: 'live',
+  scans: [], selected: -1, live: null, tab: 'live', base: null,
   view: { live: { cx: 0, cy: 0, s: 60, auto: true }, map: { cx: 3, cy: 2, s: 80 }, slam: { cx: 0, cy: 0, s: 80 } },
   wipe: 0.5, gridStats: null, auto: false, autoDist: null,
   grid: null, vmap: null, gridCanvas: null, refGrid: null, refSegs: null, queue: 0, counters: {},
@@ -2618,8 +2621,19 @@ function wsEvent(t) {
     state.auto = p[2] === '1'; state.autoDist = null; if (!state.auto) drive.busyUntil = Math.min(drive.busyUntil, Date.now()); updateAutoUi();
     if (state.auto && typeof slam !== 'undefined' && slam.auto) slamTakeOver();   // le pilotage ultrason démarre : la page lâche le pilotage par lidar
   }
+  else if (p[1] === 'T') { const rtt = Math.round(performance.now()) - parseInt(p[2], 10); if (isFinite(rtt) && rtt >= 0) { lat.hist.push(rtt); if (lat.hist.length > 5) lat.hist.shift(); lat.last = rtt; lat.at = Date.now(); updateLat(); } }
   else if (p[1] === 'D') { state.autoDist = parseInt(p[2], 10); if (state.auto && !drive.pad.some(Boolean) && !drive.keys.size) $('drvState').textContent = autoLabel(); }
 }
+/* Latence de la liaison : la page envoie T,n toutes les 1,5 s, le sketch répond E,T,n ; l'aller-retour montre le retard entre une touche et le robot */
+const lat = { last: null, hist: [], at: 0 };
+function updateLat() {
+  const el = $('drvLat'), fresh = lat.last != null && Date.now() - lat.at < 5000 && driveReady() && !$('drive').hidden;
+  el.hidden = !fresh; if (!fresh) return;
+  const m = Math.max(...lat.hist);
+  el.textContent = m > 250 ? `Liaison lente (${m} ms) : le robot réagit en retard` : `Liaison : ${lat.last} ms`;
+  el.className = 'dlat' + (m > 250 ? ' bad' : m > 120 ? ' warn' : '');
+}
+setInterval(() => { if (driveReady() && !$('drive').hidden) { try { state.ws.send('T,' + Math.round(performance.now())); } catch (_) { /* idem */ } } updateLat(); }, 1500);
 const autoLabel = () => 'Automatique' + (state.autoDist != null && isFinite(state.autoDist) ? ` · devant ${state.autoDist >= 400 ? '> 4 m' : state.autoDist + ' cm'}` : '');
 function updateAutoUi() {
   const b = $('drvAuto'); if (!b) return;
@@ -2685,7 +2699,9 @@ function driveTick() {
     drive.last = 'S'; if (state.auto) $('drvState').textContent = autoLabel(); return;
   }
   if (moving) { if (typeof slam !== 'undefined' && slam.auto) slamTakeOver(); drive.busyUntil = Date.now() + 250; drive.moves++; }   // le SLAM attend que le robot soit arrêté
-  if (moving || drive.last !== 'S') { if (driveReady()) { try { state.ws.send(cmd); } catch (_) { /* liaison coupée : le robot s'arrête seul */ } } }
+  if (moving || drive.last !== 'S') {
+    if (driveReady() && (!moving || (state.ws.bufferedAmount || 0) < 2048)) { try { state.ws.send(cmd); } catch (_) { /* liaison coupée : le robot s'arrête seul */ } }   // liaison engorgée : on n'empile pas d'ordres D périmés, le S passe toujours
+  }
   drive.last = cmd;
   $('drvState').textContent = state.auto && !moving ? autoLabel() : driveLabel(v);
   document.querySelectorAll('#drive .pad button[data-v]').forEach(b => {
@@ -2695,7 +2711,7 @@ function driveTick() {
 }
 function updateDrive() { driveTick(); }
 function driveStopAll() { drive.keys.clear(); drive.ignore.clear(); drive.pad = [0, 0, 0]; drive.shift = false; driveTick(); }
-setInterval(driveTick, 100);
+setInterval(driveTick, 60);                       // les ordres D partent toutes les 60 ms tant qu'une touche est tenue (le sketch coupe après 250 ms de silence)
 addEventListener('keydown', e => {
   if (!$('drvKeys').checked || $('drive').hidden) return;
   const t = e.target;
@@ -3284,6 +3300,19 @@ function drawGrid() {
 function draw() {
   drawBackground();
   if (state.tab === 'live') drawLive(); else if (state.tab === 'grid') drawGrid(); else if (state.tab === 'loc') drawLoc(); else if (state.tab === 'slam') drawSlam(); else drawMap();
+  if (state.tab === 'map' || state.tab === 'grid' || state.tab === 'slam') drawBase();
+}
+/* La base (point de départ du robot = premier scan) est marquée en permanence sur les cartes */
+function drawBase() {
+  const b = typeof slamBase === 'function' ? slamBase() : null; if (!b) return;
+  const [sx, sy] = w2s(b.x, b.y), c = css('--seg');
+  ctx.save(); ctx.translate(sx, sy); ctx.lineJoin = 'round';
+  ctx.strokeStyle = css('--canvas'); ctx.lineWidth = 5; ctx.fillStyle = c;
+  ctx.beginPath(); ctx.moveTo(-9, -1); ctx.lineTo(0, -10); ctx.lineTo(9, -1); ctx.lineTo(6, -1); ctx.lineTo(6, 8); ctx.lineTo(-6, 8); ctx.lineTo(-6, -1); ctx.closePath();
+  ctx.stroke(); ctx.fill();
+  ctx.fillStyle = css('--canvas'); ctx.fillRect(-2, 2, 4, 6);
+  ctx.font = '700 12px ' + css('--font'); ctx.textAlign = 'left'; ctx.strokeStyle = css('--canvas'); ctx.lineWidth = 3.5; ctx.strokeText('Base', 13, 5); ctx.fillStyle = c; ctx.fillText('Base', 13, 5);
+  ctx.restore();
 }
 
 /* ---------- pastille de connexion, HUD, écran vide ---------- */
@@ -4475,10 +4504,16 @@ const slam = { auto: false, planNeeded: false, fresh: null, curPose: null, step:
 const slamNum = (id, d, lo, hi) => { const v = parseFloat($(id).value); return isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
 const slamLive = () => isLinked() || !!state.simTimer;
 const slamMoving = () => Date.now() < drive.busyUntil + slamNum('slamSettle', 700, 100, 5000);   // commande récente + temps de s'arrêter
+/* La base : le point de départ du robot, c'est-à-dire la pose du premier scan (l'origine de la carte). Affichée en permanence sur les cartes. */
+function slamBase() {
+  if (!state.scans.length) return null;
+  const s0 = state.scans[0].pose;
+  return state.base ? { ...state.base } : { x: s0.x, y: s0.y, th: s0.th };
+}
 const slamPose = () => slam.last || (state.scans.length ? state.scans[state.scans.length - 1].pose : { x: 0, y: 0, th: 0 });
 
 function slamSummary() {
-  if (slam.on) return (slam.auto ? 'Automatique' : 'Manuel') + (slam.busy ? ' · scan en cours' : ` · ${plural(state.scans.length, 'scan', 'scans')}`);
+  if (slam.on) return (slam.auto ? (slam.homing ? 'Retour à la base' : 'Automatique') : 'Manuel') + (slam.busy ? ' · scan en cours' : ` · ${plural(state.scans.length, 'scan', 'scans')}`);
   return slam.kept ? `Arrêté · ${plural(slam.kept, 'scan pris', 'scans pris')}` : 'Le robot cartographie tout seul';
 }
 function slamHud() {
@@ -4486,6 +4521,7 @@ function slamHud() {
   const p = slamPose();
   return `<span><b>${state.scans.length}</b>scans</span><span><b>${fmt(slam.dist, 2)}</b>m parcourus</span>`
     + `<span><b>${fmt(p.x, 2)} · ${fmt(p.y, 2)}</b>x · y (m)</span><span><b>${fmt(p.th, 1)}°</b>cap</span>`
+    + (slamBase() ? `<span><b>${fmt(Math.hypot(p.x - slamBase().x, p.y - slamBase().y), 1)} m</b>de la base</span>` : '')
     + `<span><b>${slam.on ? (slamMoving() ? 'En route' : 'Immobile') : 'Arrêté'}</b>robot</span>`
     + (slam.on ? `<span><b>${slam.auto ? 'Auto' : 'Manuel'}</b>mode</span>` : '');
 }
@@ -4534,8 +4570,12 @@ function slamLoop() {
   if (!slamLive()) { slamStop('Connexion perdue : SLAM arrêté.', 'err'); return; }
   if (slam.auto) {                                              // exploration autonome : limites choisies
     const mins = (Date.now() - slam.startedAt) / 60000;
-    if (slam.kept >= slamNum('slamMaxScans', 80, 5, 500) || mins >= slamNum('slamMaxMin', 10, 1, 60)) {
-      const n = state.scans.length;
+    if (slam.homing && slam.homeSteps > 70) { slamStop('Je n’ai pas réussi à ramener le robot à sa base : ramène-le à la main. La carte est dans l’onglet Carte.', 'warn'); return; }
+    if (!slam.homing && (slam.kept >= slamNum('slamMaxScans', 80, 5, 500) || mins >= slamNum('slamMaxMin', 10, 1, 60))) {
+      const n = state.scans.length, p = slam.curPose || slam.last, b = slamBase();
+      if (slamHomeWanted() && p && Math.hypot(p.x - b.x, p.y - b.y) > 0.3) {     // limite atteinte : on rentre d'abord
+        slam.homing = true; slam.homeSteps = 0; slamSay(`Limite atteinte (${plural(n, 'scan', 'scans')}, ${fmt(mins, 1)} min) : le robot rentre à sa base.`, 'ok'); return;
+      }
       slamStop(`Exploration terminée : ${plural(n, 'scan', 'scans')} en ${fmt(mins, 1)} min. La carte est dans l’onglet Carte, prête à être retouchée ou exportée.`, 'ok'); return;
     }
   }
@@ -4584,6 +4624,7 @@ async function slamCapture0() {
   const n = state.counters.slam = (state.counters.slam ?? -1) + 1;
   const sc = { ...scan, name: `slam_${String(n).padStart(3, '0')}`, color: nextColor(),
     pose: { x: Math.round(pose.x * 1000) / 1000, y: Math.round(pose.y * 1000) / 1000, th: Math.round(pose.th * 10) / 10 } };
+  if (first || !state.scans.length) state.base = { x: sc.pose.x, y: sc.pose.y, th: sc.pose.th };   // le premier scan : le robot est sur sa base
   state.scans.push(sc); state.selected = state.scans.length - 1; flags.exported = false;
   slam.stack.push({ scan: sc, dist: d }); slam.kept++; slam.dist += d; slam.last = { ...sc.pose };
   renderScanList(); scheduleRebuild();
@@ -4603,6 +4644,7 @@ function slamUndo() {
   slam.kept = Math.max(0, slam.kept - 1); slam.dist = Math.max(0, slam.dist - e.dist);
   slam.last = state.scans.length ? { ...state.scans[state.scans.length - 1].pose } : null;
   state.selected = Math.min(state.selected, state.scans.length - 1);
+  if (!state.scans.length) state.base = null;
   renderScanList(); scheduleRebuild(); updateTimeline(); slamSay('Dernier scan annulé.'); slamUi(); draw();
 }
 function slamReset() {
@@ -4612,7 +4654,7 @@ function slamReset() {
   }
   b.textContent = 'Recommencer'; slam.resetAsk = 0;
   if (slam.on) slamStop('SLAM arrêté.');
-  state.scans = []; state.selected = -1; state.counters = {}; state.colorIdx = 0;
+  state.scans = []; state.selected = -1; state.counters = {}; state.colorIdx = 0; state.base = null;
   flags.mapSeen = false; flags.gridSeen = false; flags.posed = false; flags.tuned = false; flags.exported = false;
   slamPlanReset(); Object.assign(slam, { tr: null, kept: 0, skipped: 0, rejected: 0, dist: 0, last: null, lastRes: null, stack: [], bbKey: '' });
   slamSay('Carte effacée.');
@@ -4631,8 +4673,9 @@ const slamSend = m => { try { if (driveReady()) { state.ws.send(m); return true;
 const AGC = 0.1, AG_FREE = 8, AG_OCC = 10;                     // case (m) · portée utile pour « libre » · portée maximale pour un obstacle
 function slamPlanReset() {
   Object.assign(slam, { planNeeded: false, fresh: null, curPose: null, step: null, lastMove: null, plan: null, target: null, lastOutcome: '',
-    wrongDir: 0, still: 0, nofit: 0, stuck: 0, arrivals: {}, banned: [], nSteps: 0 });
+    wrongDir: 0, still: 0, nofit: 0, stuck: 0, arrivals: {}, banned: [], nSteps: 0, homing: false, homeSteps: 0 });
 }
+const slamHomeWanted = () => $('slamHome').value !== 'no' && !!slamBase();
 const slamAutoNums = () => ({ step: slamNum('slamAutoStep', 40, 15, 80) / 100, infl: slamNum('slamAutoR', 25, 15, 50) / 100, cover: slamNum('slamCover', 2, 0, 5) });
 function slamBuildGrid(infl) {
   const sc = state.scans.filter(s => s.visible !== false);
@@ -4804,13 +4847,34 @@ function slamPlanStep() {
   if (G.g[start] !== 1) G.g[start] = 1;
   const dist = slamDijkstra(G, start);
   let tgt = null;
-  for (let tries = 0; tries < 6; tries++) {
+  for (let tries = 0; tries < 6 && !slam.homing; tries++) {
     tgt = slamPickTarget(G, dist, cur, cfg);
     if (!tgt) break;
     if (dist[tgt.i] * AGC < 0.25) {                            // arrivé : si la case reste inconnue après un scan d'ici, on n'insiste pas
       slam.banned.push({ x: tgt.x, y: tgt.y }); slam.target = null; tgt = null; continue;
     }
     break;
+  }
+  const base = slamBase();
+  if (!tgt && !slam.homing && slamHomeWanted() && Math.hypot(cur.x - base.x, cur.y - base.y) > 0.3) {
+    slam.homing = true; slam.homeSteps = 0; slamSay('La pièce est scannée : le robot rentre à sa base.', 'ok');
+  }
+  if (slam.homing) {                                           // retour au point de départ : la case libre la plus proche de la base
+    slam.homeSteps++; tgt = null;
+    const dB = Math.hypot(cur.x - base.x, cur.y - base.y);
+    if (dB >= 0.25) {
+      for (let i = 0; i < G.N; i++) {
+        if (dist[i] >= 1e8 || G.g[i] !== 1 || (G.blk[i] && !G.near[i])) continue;
+        const e = Math.hypot(G.cx(i) - base.x, G.cy(i) - base.y);
+        if (!tgt || e < tgt.e - 1e-9 || (Math.abs(e - tgt.e) < 1e-9 && dist[i] < dist[tgt.i])) tgt = { kind: 'home', i, x: G.cx(i), y: G.cy(i), cost: dist[i], size: 0, e };
+      }
+      if (tgt && dist[tgt.i] * AGC < 0.15) tgt = null;           // déjà à la case la plus proche de la base
+    }
+    if (!tgt) {
+      const n = state.scans.length, mins = (Date.now() - slam.startedAt) / 60000, dth = Math.abs(wrapDeg(cur.th - base.th));
+      const cm = Math.round(dB * 100);
+      slamStop(`Exploration terminée : la pièce est scannée et le robot est ${dB < 0.4 ? 'revenu à sa base' : 'rentré aussi près de sa base que possible'} (à ${cm} cm du départ${dth > 5 ? `, cap décalé de ${Math.round(dth)}°` : ''}). ${plural(n, 'scan', 'scans')} en ${fmt(mins, 1)} min. La carte est dans l’onglet Carte.`, dB < 0.4 ? 'ok' : 'warn'); return;
+    }
   }
   if (!tgt) {
     const n = state.scans.length, mins = (Date.now() - slam.startedAt) / 60000;
@@ -4840,7 +4904,7 @@ function slamPlanStep() {
     slam.stuck = 0; d = best.d; vx = Math.round(Math.cos(best.k * Math.PI / 4)); vy = Math.round(Math.sin(best.k * Math.PI / 4));
     const diag = !!(vx && vy), v = slam.kv[diag ? 'diag' : 'axis'] * pct;
     ms = Math.round(Math.min(900, Math.max(120, d / v * 1000))); if (slam.nSteps <= 2) ms = Math.min(ms, 250);
-    label = `${tgt.kind === 'front' ? 'vers une zone inconnue' : 'vers un nouveau point de vue'}, à ${fmt(ds * AGC, 1)} m`;
+    label = `${tgt.kind === 'front' ? 'vers une zone inconnue' : tgt.kind === 'home' ? 'retour à la base' : 'vers un nouveau point de vue'}, à ${fmt(ds * AGC, 1)} m`;
     slamSendStep(vx, vy, 0, ms, {});
   } else {                                                      // aucun pas ne rapproche : on s'écarte de l'obstacle, sinon on tourne un peu
     slam.stuck++;
