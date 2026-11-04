@@ -121,6 +121,8 @@ et c'est l'ESP32 qui coupe les moteurs à la fin des `ms` millisecondes (30 à 1
 - `WiFi.setSleep(false)` (l'économie d'énergie du Wi-Fi ajoute des dizaines de ms) ;
 - une **rotation adoucie** : les ordres de rotation `D` et `P` sont multipliés par `ECHELLE_ROTATION` (0,5 ; 1,0 = pleine vitesse), la rotation étant bien plus vive que l'avance.
 La page n'empile plus d'ordres `D` périmés si la liaison est engorgée (l'arrêt `S` passe toujours) et affiche la **latence** sous le pavé : elle envoie `T,n` toutes les 1,5 s, le sketch répond `E,T,n` à ce seul client.
+
+**Profils de vitesse (sketch, idée reprise du projet MecanumWheelRobot)** : les roues ne passent plus de 0 à pleine puissance d'un coup. Le sketch applique une rampe fondée sur l'horloge (aucun `delay()`) entre la vitesse demandée et celle des roues : **courbe en S** par défaut (départ et arrivée doux), montée de 150 ms, freinage de 100 ms. Les rouleaux mecanum patinent moins, le robot dérive moins de son cap et les déplacements sont plus prévisibles pour la page. Un ordre `D` identique répété (toutes les 60 ms) ne relance pas la rampe ; `S` et la fin d'un pas `P` freinent en douceur. Les **arrêts de sécurité restent immédiats** (coupe-circuit de 250 ms, minuteur de 10 ms, déconnexion, pilotage ultrason). Commande `R,profil[,montée_ms[,freinage_ms]]` : profil 0 = carré (ancien comportement, aucune rampe), 1 = trapézoïdal (rampe linéaire), 2 = courbe en S. À téléverser pour en profiter ; la page n'a rien à changer, elle calibre toute seule les vitesses mesurées.
 Au-delà de 250 ms d'aller-retour, la page signale « Liaison lente » : rapproche-toi du robot, évite d'autres appareils sur le réseau Robot-LiDAR.
 
 ### SLAM automatique (v20)

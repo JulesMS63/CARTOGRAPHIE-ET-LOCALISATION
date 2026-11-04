@@ -26,7 +26,9 @@
 //                   puis le robot s'arrête tout seul (pilotage « Pas à pas » de la page)
 //   A,1[,v[,pause]] pilotage automatique (capteur ultrason + servo) à la vitesse v %, avec une pause de
 //                   pause ms entre deux avances (0 = sans pause) ;  A,0 l'arrête. D, P ou S reprennent la main.
-//   S               arrêt
+//   S               arrêt (freinage progressif, voir R)
+//   R,profil[,accel_ms[,frein_ms]]  profil de vitesse des roues : 0 = carré (aucune rampe), 1 = trapézoïdal (rampe linéaire), 2 = courbe en S (défaut) ;
+//                   accel_ms = durée de la montée (défaut 150), frein_ms = durée du freinage (défaut 100). Les arrêts de sécurité restent immédiats.
 //   T,n             mesure de latence : le sketch répond E,T,n à cette page, la page calcule l'aller-retour
 //   Le sketch envoie aussi à la page : E,M (le robot bouge), E,R (il s'est arrêté), E,A,1 / E,A,0,raison (auto marche / arrêt), E,D,cm (distance devant)
 // La page répète D,... toutes les 100 ms tant qu'une touche est tenue.
@@ -99,6 +101,20 @@ uint32_t lidarProchainMs = 0;            // pas d'envoi du lidar avant cet insta
 bool lidarRoulait = false;
 int pwmRoue[4]  = {0, 0, 0, 0};          // vitesse demandée à chaque roue (-255 à 255)
 int pwmEnvoye[4] = {1000, 1000, 1000, 1000};   // dernière valeur envoyée à la carte (1000 = inconnue)
+
+// --- Profils de vitesse (idée reprise du projet MecanumWheelRobot : profils carré / trapézoïdal / courbe en S) ---
+// pwmRoue = ce qui est appliqué à l'instant ; pwmCible = ce que la page demande. Entre les deux, une rampe fondée sur l'horloge (aucun delay()) :
+// le robot démarre et freine en douceur, les rouleaux mecanum patinent moins et le cap dérive moins. Un ordre identique répété (flux D) ne relance pas la rampe.
+// Les arrêts de sécurité (coupe-circuit, minuteur, déconnexion, ultrason) coupent tout de suite, sans rampe.
+const uint8_t PROFIL_CARRE = 0, PROFIL_TRAPEZE = 1, PROFIL_S = 2;
+uint8_t profilVitesse = PROFIL_S;
+uint16_t rampeAccelMs = 150;             // durée de la montée en vitesse
+uint16_t rampeFreinMs = 100;             // durée du freinage (doit rester sous DELAI_ARRET_MS)
+int pwmCible[4]  = {0, 0, 0, 0};
+int pwmDepart[4] = {0, 0, 0, 0};
+uint32_t rampeDebutMs = 0, rampeDureeMs = 0;
+volatile bool rampeActive = false;
+volatile bool pasEnCours = false;        // un pas P est en cours : son arrêt se fait en douceur
 
 // La carte répond-elle à son adresse ? (test ACK, avec l'horloge de la bibliothèque)
 bool cartePresente(mecanumCar* c) {
@@ -220,7 +236,8 @@ void moteur(int roue, int pwm) {
 }
 
 void arreter() {
-  for (int r = 0; r < 4; r++) { pwmRoue[r] = 0; moteur(r, 0); }
+  rampeActive = false; pasEnCours = false;
+  for (int r = 0; r < 4; r++) { pwmRoue[r] = 0; pwmCible[r] = 0; moteur(r, 0); }
 }
 
 // Coupe les 8 canaux (utilisé par la page de test et à la fin d'un essai manuel).
@@ -231,7 +248,8 @@ uint32_t essaiFinMs = 0;
 
 void arreterTout() {
   for (uint8_t c = 1; c <= 8; c++) ecrireCanal(c, 0);
-  for (int r = 0; r < 4; r++) { pwmRoue[r] = 0; pwmEnvoye[r] = 0; }
+  rampeActive = false; pasEnCours = false;
+  for (int r = 0; r < 4; r++) { pwmRoue[r] = 0; pwmCible[r] = 0; pwmEnvoye[r] = 0; }
   essaiManuel = false;
 }
 
@@ -245,14 +263,53 @@ bool enMouvement() {
 // Sans lui, un envoi Wi-Fi qui bloque loop() pendant des centaines de ms laissait le robot rouler (ou tourner) bien après le relâchement de la touche.
 void arretUrgence() {
   for (int i = 0; i < 8; i++) PWM_WRITE(i, 0);
-  for (int r = 0; r < 4; r++) { pwmRoue[r] = 0; pwmEnvoye[r] = 0; }
+  rampeActive = false; pasEnCours = false;
+  for (int r = 0; r < 4; r++) { pwmRoue[r] = 0; pwmCible[r] = 0; pwmEnvoye[r] = 0; }
   essaiManuel = false;
 }
 void secuMinuteur(void*) {
   if (modeMoteur != MODE_GPIO || testRoue >= 0 || !enMouvement()) return;
   uint32_t now = millis();
-  bool depasse = essaiManuel ? (int32_t)(now - essaiFinMs) >= 0 : (now - dernierOrdreMs) > DELAI_ARRET_MS + 100;   // +100 ms : loop() coupe elle-même en premier quand elle tourne
+  bool depasse = essaiManuel ? (int32_t)(now - essaiFinMs) >= ((pasEnCours && profilVitesse != PROFIL_CARRE && rampeFreinMs > 0) ? 100 : 0) : (now - dernierOrdreMs) > DELAI_ARRET_MS + 100;   // +100 ms : loop() coupe elle-même en premier quand elle tourne
   if (depasse) arretUrgence();
+}
+
+// Calcule les vitesses des roues sur la rampe en cours (appelée à chaque tour de loop(), selon l'horloge).
+void rampe() {
+  if (!rampeActive) return;
+  uint32_t t = millis() - rampeDebutMs;
+  float x = (rampeDureeMs == 0 || t >= rampeDureeMs) ? 1.0f : (float)t / (float)rampeDureeMs;
+  float f = profilVitesse == PROFIL_S ? x * x * (3.0f - 2.0f * x) : x;   // courbe en S : départ et arrivée doux ; trapézoïdal : rampe linéaire
+  for (int r = 0; r < 4; r++) {
+    int p = (int)lroundf(pwmDepart[r] + (pwmCible[r] - pwmDepart[r]) * f);
+    if (p != 0 && abs(p) < PWM_MINI) p = (pwmCible[r] == 0) ? 0 : (p > 0 ? PWM_MINI : -PWM_MINI);   // sous le minimum le moteur ne tourne pas : on saute à PWM_MINI, ou on coupe en fin de freinage
+    pwmRoue[r] = p;
+    moteur(r, p);
+  }
+  if (x >= 1.0f) rampeActive = false;
+}
+
+// Nouvelle consigne des 4 roues. Un ordre identique à la cible actuelle ne relance pas la rampe.
+void viser(const int cible[4], uint16_t dureeMs) {
+  bool diff = false;
+  for (int r = 0; r < 4; r++) if (cible[r] != pwmCible[r]) diff = true;
+  if (!diff) return;
+  for (int r = 0; r < 4; r++) {
+    pwmDepart[r] = pwmRoue[r]; pwmCible[r] = cible[r];
+    if (pwmDepart[r] == 0 && cible[r] != 0) pwmDepart[r] = cible[r] > 0 ? PWM_MINI : -PWM_MINI;   // à l'arrêt, la rampe part du minimum qui fait tourner le moteur
+  }
+  rampeDebutMs = millis();
+  rampeDureeMs = profilVitesse == PROFIL_CARRE ? 0 : dureeMs;
+  rampeActive = true;
+  rampe();                               // premier palier tout de suite (puis la boucle continue)
+}
+
+// Arrêt en douceur (ordre S, fin d'un pas P). dernierOrdreMs est remis à l'heure pour que le coupe-circuit laisse finir le freinage.
+void arreterDoux() {
+  static const int zero[4] = {0, 0, 0, 0};
+  essaiManuel = false; pasEnCours = false;
+  dernierOrdreMs = millis();
+  viser(zero, rampeFreinMs);
 }
 
 // Traduit (vx, vy, w) et une vitesse en % en vitesses des 4 roues, puis les applique.
@@ -271,20 +328,22 @@ void piloter(float vx, float vy, float w, int pct) {
   for (int r = 0; r < 4; r++) m = max(m, fabsf(v[r]));
   if (m < 1) m = 1;                      // pas d'amplification, seulement une réduction si une roue dépasse 100 %
 
-  bool change = false;
+  bool change = false, tousNuls = true;
+  int cible[4];
   for (int r = 0; r < 4; r++) {
     float f = v[r] / m;
     int p = (int)lroundf(fabsf(f) * pct * 2.55f);
     if (p > 0 && p < PWM_MINI) p = PWM_MINI;
     p = f < 0 ? -p : p;
-    if (p != pwmRoue[r]) change = true;
-    pwmRoue[r] = p;
+    if (p != pwmCible[r]) change = true;
+    if (p != 0) tousNuls = false;
+    cible[r] = p;
   }
-  for (int r = 0; r < 4; r++) moteur(r, pwmRoue[r]);
+  viser(cible, tousNuls ? rampeFreinMs : rampeAccelMs);
 
   if (change) {
     Serial.printf("Ordre vx=%.1f vy=%.1f w=%.2f v=%d%%  ->  AG=%d AD=%d RG=%d RD=%d\n",
-                  vx, vy, w, pct, pwmRoue[0], pwmRoue[1], pwmRoue[2], pwmRoue[3]);
+                  vx, vy, w, pct, pwmCible[0], pwmCible[1], pwmCible[2], pwmCible[3]);
     if (!carteRepond() && millis() - dernierMessageMs > 2000) {
       dernierMessageMs = millis();
       Serial.println("!! La carte moteur ne repond pas (I2C 0x30). Batteries branchees ? Interrupteur de la carte sur ON ? Tape 'i' pour chercher les broches.");
@@ -519,12 +578,22 @@ void traiterCommande(uint8_t num, uint8_t* payload, size_t length) {
 
   if (buf[0] == 'S') {
     if (enMouvement()) Serial.println("Ordre S : arret");
-    arreter();
+    arreterDoux();
+  } else if (buf[0] == 'R') {
+    // Profil de vitesse : R,profil[,accel_ms[,frein_ms]]
+    int pr = profilVitesse, ac = rampeAccelMs, fr = rampeFreinMs;
+    int lus = sscanf(buf, "R,%d,%d,%d", &pr, &ac, &fr);
+    if (lus >= 1) {
+      profilVitesse = (uint8_t)constrain(pr, 0, 2);
+      rampeAccelMs = (uint16_t)constrain(ac, 0, 1000);
+      rampeFreinMs = (uint16_t)constrain(fr, 0, DELAI_ARRET_MS - 50);
+      Serial.printf("Profil de vitesse %d, montee %d ms, freinage %d ms\n", profilVitesse, rampeAccelMs, rampeFreinMs);
+    }
   } else if (buf[0] == 'D') {
     int vx = 0, vy = 0, w = 0, pct = VITESSE_DEFAUT_PCT;
     int lus = sscanf(buf, "D,%d,%d,%d,%d", &vx, &vy, &w, &pct);
     if (lus >= 3) {
-      essaiManuel = false;
+      essaiManuel = false; pasEnCours = false;
       dernierOrdreMs = millis();
       piloter(vx, vy, w * ECHELLE_ROTATION, pct);
     }
@@ -542,7 +611,7 @@ void traiterCommande(uint8_t num, uint8_t* payload, size_t length) {
       if (ms < 30) ms = 30;
       if (ms > 1000) ms = 1000;
       piloter(vx, vy, w * ECHELLE_ROTATION, pct);
-      essaiManuel = true;                // la boucle principale coupe les moteurs à la fin de la durée
+      essaiManuel = true; pasEnCours = true;   // la boucle principale freine à la fin de la durée
       essaiFinMs = millis() + ms;
     }
   }
@@ -924,9 +993,13 @@ void loop() {
   }
 
   // Fin d'un essai de la page de test (3 s sans nouvel ordre, ou durée demandée écoulée)
+  rampe();                               // monte ou descend les vitesses des roues sur le profil choisi
   if (essaiManuel && (int32_t)(millis() - essaiFinMs) >= 0) {
-    arreterTout();
-    Serial.println("Arret automatique (fin du pas ou de l'essai)");
+    if (pasEnCours) arreterDoux();       // fin d'un pas P : freinage progressif
+    else {
+      arreterTout();
+      Serial.println("Arret automatique (fin du pas ou de l'essai)");
+    }
   }
 
   // Arrêt automatique : plus d'ordre récent (touche relâchée, Wi-Fi coupé)
