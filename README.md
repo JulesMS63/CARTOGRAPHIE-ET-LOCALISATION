@@ -123,6 +123,16 @@ Le premier scan définit l'origine ; si des scans existent déjà, le SLAM conti
 le robot n'a presque pas bougé (« Garder si bougé de », 3 cm) est ignoré ; un recalage peu sûr est signalé. Boutons : **Scanner maintenant**, **Annuler le dernier scan**, **Recommencer**, **Voir la carte**.
 Autres déclencheurs (Réglages) : toutes les N secondes, ou seulement à la demande. Pendant le SLAM, la grille et la carte vectorielle ne sont refaites qu'en quittant l'onglet.
 
+#### Option : SLAM automatique (le robot explore seul, v22)
+
+Le pilotage manuel reste la façon de faire par défaut. En option, le bouton **SLAM automatique** (onglet SLAM, ou étape du menu) lance le SLAM **et** le pilotage automatique en même temps :
+le robot explore la pièce avec le capteur ultrason et le servo, et la page prend un scan à chaque arrêt de l'automate (le premier scan fixe l'origine). Il envoie `A,1,v,pause` au sketch,
+où `pause` (« Attente après l'arrêt » + 500 ms, 1200 ms par défaut) laisse le robot immobile avant le tour de lidar.
+Le bouton devient **Reprendre la main** ; le même effet s'obtient avec **Passer en automatique** pendant un SLAM manuel déjà commencé, ou avec une touche / un bouton du pavé.
+Arrêts automatiques (Réglages SLAM) : 60 scans (`slamMaxScans`), 10 minutes (`slamMaxMin`), 3 recalages ratés de suite (carte perdue), robot qui annonce `E,A,0,<code>`
+(`main` = reprise en main, `muet` = capteur sans réponse, `bloque` = 4 échecs de manœuvre de suite, `fin` = arrêt demandé), ou perte du lien Wi-Fi.
+Limites : testé en simulation et avec un faux lien seulement ; le comportement sur le vrai robot (sens du servo, seuils, vitesse, murs obliques ou mous) reste à valider, à vitesse faible et sous surveillance.
+
 ### Pilotage automatique (capteur ultrason + servo)
 
 Matériel : HC-SR04 (TRIG = D23, ECHO = D22, 5 V) et micro servo 9 g sur D26 (5 V), le servo porte le capteur (90° = droit devant).
