@@ -99,6 +99,14 @@ Un message WebSocket = un tour complet. Formats lus : JSON `[{"a":angle°,"d":di
 Au moins 50 points par tour. Si la liaison tombe, la page retente 10 fois toutes les 2 s. Sans `i`, tous les points ont
 l'intensité 255 : le filtre d'intensité n'a alors rien à filtrer. Le mot de passe du réseau n'est jamais demandé ni stocké.
 
+#### Coupures du Wi-Fi (v33)
+Si le lien tombe pendant un essai :
+- **La page** retente pendant une minute (30 essais, un toutes les 2 s), détecte un lien « ouvert mais muet » (5 s sans aucun message : PC parti sur un autre réseau, carte plantée) et rouvre la connexion tout de suite. Elle compte les coupures (« Liaison : 12 ms · 2 coupures ») et indique la cause probable (code 1006 = coupure sans prévenir : portée, interférences ou carte redémarrée). Si le SLAM tournait, le robot reste arrêté : clique « Passer en automatique » ou « Suivre le trajet » pour reprendre, la carte est conservée.
+- **Le sketch** envoie à chaque connexion la durée de fonctionnement de la carte (`E,U`) et la raison de son dernier démarrage (`E,B`) : si la carte a **redémarré par chute de tension (brownout)** quand les moteurs ont démarré, la page l'affiche en rouge (« Robot redémarré : chute de tension »). C'est une cause fréquente de coupure en roulant : batteries faibles, ESP32 alimenté par la même ligne que les moteurs, pas de condensateur sur le 5 V. Le moniteur série affiche aussi la raison au démarrage et le nombre de clients à chaque déconnexion.
+- Le sketch détecte un lien mort en ~16 s (ping WebSocket toutes les 10 s) et le robot s'arrête de toute façon dès que les ordres cessent (250 ms). Canal Wi-Fi fixé (`WIFI_CANAL`, 6 par défaut : essaie 1 ou 11 si un autre réseau est proche), 2 appareils au plus, puissance d'émission maximale.
+- Si la page ne dit rien de précis : colle-moi la ligne « Liaison : … » et les messages du moniteur série au moment de la coupure.
+Le sketch utilise `enableHeartbeat` : il faut la bibliothèque WebSockets de Markus Sattler en version 2.3 ou plus récente.
+
 ### Piloter le robot (v16)
 
 Connecté en Wi-Fi, un **pavé de pilotage** apparaît en bas à droite de la vue Direct : on voit le lidar en direct pendant qu'on conduit.

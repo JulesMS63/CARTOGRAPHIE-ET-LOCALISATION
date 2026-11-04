@@ -2544,7 +2544,8 @@ async function disconnect() {
 
 /* ---------- liaison Wi-Fi : WebSocket vers l'ESP32 (un message = un tour) ---------- */
 state.ws = null; state.wsRetry = null; state.wsBad = 0;
-const WS_RETRIES = 10;
+const WS_RETRIES = 30;                                      // 30 essais, un toutes les 2 s : une minute pour que le robot ou le réseau revienne
+const wsStat = { drops: 0, lastRx: 0, url: '', downAt: 0, code: 0, upPrev: null, upAt: 0, rebooted: false, reboots: 0 };   // coupures de la liaison Wi-Fi (v33)
 const wsDecoder = new TextDecoder();
 try { const saved = localStorage.getItem('lidarWsAddr'); if (saved) $('wsAddr').value = saved; } catch (_) { /* stockage indisponible */ }
 
@@ -2569,6 +2570,7 @@ function connectWifi() {
   stopSim(true); showHelp(false);
   state.stop = false; state.bytes = 0; state.gotScan = false; state.monText = ''; state.monDirty = true; state.live = null; state.wsBad = 0;
   parser.rows = []; parser.buf = ''; parser.lastAng = null;
+  wsStat.drops = 0; wsStat.reboots = 0; wsStat.upPrev = null; wsStat.rebooted = false; wsStat.url = url;
   wsOpen(url, 0);
 }
 function wsOpen(url, tries) {
@@ -2583,25 +2585,28 @@ function wsOpen(url, tries) {
   let opened = false;
   const giveUp = setTimeout(() => { if (!opened) { try { ws.close(); } catch (_) { /* déjà fermé */ } } }, 5000);
   ws.onopen = () => {
-    opened = true; clearTimeout(giveUp);
-    setStatus('connStatus', tries ? 'Reconnecté en Wi-Fi.' : 'Connecté en Wi-Fi. Attente du premier tour complet…', 'ok');
+    opened = true; clearTimeout(giveUp); wsStat.lastRx = Date.now();
+    const away = wsStat.downAt ? Math.round((Date.now() - wsStat.downAt) / 1000) : 0; wsStat.downAt = 0;
+    setStatus('connStatus', tries ? `Reconnecté en Wi-Fi après ${away} s (coupure n° ${wsStat.drops}).` : 'Connecté en Wi-Fi. Attente du premier tour complet…', 'ok');
+    if (tries && typeof slam !== 'undefined' && slam.on) slamSay('Liaison Wi-Fi revenue. Le robot est arrêté : clique « Passer en automatique » ou « Suivre le trajet » pour reprendre.', 'warn');
     setConn('live');
     if (!tries) toast('Lidar connecté en Wi-Fi');
     startWatchdogs();
   };
-  ws.onmessage = ev => wsMessage(ev.data);
+  ws.onmessage = ev => { wsStat.lastRx = Date.now(); wsMessage(ev.data); };
   ws.onerror = () => { /* onclose suit toujours : le message est donné là */ };
-  ws.onclose = () => {
+  ws.onclose = ev => {
     clearTimeout(giveUp);
     if (state.ws !== ws) return;                              // déconnexion voulue ou connexion remplacée
+    if (opened) { wsStat.drops++; wsStat.code = ev && ev.code || 0; if (!wsStat.downAt) wsStat.downAt = Date.now(); }
     if (!opened && tries === 0) {
       wsEnd(`Pas de réponse de ${addr}. Vérifiez que l’ordinateur est connecté au Wi-Fi de l’ESP32, que la carte est alimentée, et l’adresse.`, 'error');
       showHelp(); return;
     }
-    if (tries >= WS_RETRIES) { wsEnd('Liaison Wi-Fi perdue. Reconnectez-vous.', 'error'); return; }
+    if (tries >= WS_RETRIES) { wsEnd(`Liaison Wi-Fi perdue (${wsStat.drops} coupure${wsStat.drops > 1 ? 's' : ''}). Vérifie que l’ordinateur est toujours sur le réseau du robot et que la carte est alimentée, puis reconnecte-toi.`, 'error'); return; }
     clearTimers();
     setConn('error');
-    setStatus('connStatus', 'Liaison Wi-Fi perdue. Nouvelle tentative…', 'warn');
+    setStatus('connStatus', `Liaison Wi-Fi perdue${wsStat.code === 1006 ? ' sans prévenir (hors de portée, interférences, ou carte redémarrée)' : ''} : nouvelle tentative…`, 'warn');
     state.wsRetry = setTimeout(() => { if (state.ws === ws) wsOpen(url, tries + 1); }, 2000);
   };
 }
@@ -2631,6 +2636,16 @@ function wsEvent(t) {
     if (state.auto && typeof slam !== 'undefined' && slam.auto) slamTakeOver();   // le pilotage ultrason démarre : la page lâche le pilotage par lidar
   }
   else if (p[1] === 'T') { const rtt = Math.round(performance.now()) - parseInt(p[2], 10); if (isFinite(rtt) && rtt >= 0) { lat.hist.push(rtt); if (lat.hist.length > 5) lat.hist.shift(); lat.last = rtt; lat.at = Date.now(); updateLat(); } }
+  else if (p[1] === 'U') {                                                 // depuis combien de secondes la carte tourne : plus petit que prévu = elle a redémarré pendant la coupure
+    const up = parseInt(p[2], 10);
+    if (isFinite(up)) { if (wsStat.upPrev != null && up < wsStat.upPrev + (Date.now() - wsStat.upAt) / 1000 - 5) { wsStat.rebooted = true; wsStat.reboots++; } wsStat.upPrev = up; wsStat.upAt = Date.now(); wsStat.fresh = up < 90; }
+  }
+  else if (p[1] === 'B') {                                                 // pourquoi la carte a démarré
+    const why = p[2], rb = wsStat.rebooted || (wsStat.fresh && wsStat.drops === 0 && wsStat.reboots === 0); wsStat.rebooted = false;
+    if (rb && why === 'brownout') { setStatus('connStatus', 'Le robot a redémarré par CHUTE DE TENSION (brownout) : batteries faibles ou moteurs trop gourmands au démarrage. Recharge les batteries, branche l’ESP32 sur une alimentation propre (condensateur sur le 5 V), réduis la vitesse ou la rampe d’accélération.', 'err'); toast('Robot redémarré : chute de tension'); }
+    else if (rb && why === 'plantage') { setStatus('connStatus', 'Le sketch du robot a planté et redémarré. Regarde le moniteur série de l’ESP32 pour la cause.', 'err'); toast('Robot redémarré : plantage'); }
+    else if (rb && why === 'marche') { setStatus('connStatus', 'La carte du robot a été éteinte puis rallumée (alimentation coupée : batterie, interrupteur ou câble).', 'warn'); }
+  }
   else if (p[1] === 'D') { state.autoDist = parseInt(p[2], 10); if (state.auto && !drive.pad.some(Boolean) && !drive.keys.size) $('drvState').textContent = autoLabel(); }
 }
 /* Latence de la liaison : la page envoie T,n toutes les 1,5 s, le sketch répond E,T,n ; l'aller-retour montre le retard entre une touche et le robot */
@@ -2639,10 +2654,19 @@ function updateLat() {
   const el = $('drvLat'), fresh = lat.last != null && Date.now() - lat.at < 5000 && driveReady() && !$('drive').hidden;
   el.hidden = !fresh; if (!fresh) return;
   const m = Math.max(...lat.hist);
-  el.textContent = m > 250 ? `Liaison lente (${m} ms) : le robot réagit en retard` : `Liaison : ${lat.last} ms`;
+  el.textContent = (m > 250 ? `Liaison lente (${m} ms) : le robot réagit en retard` : `Liaison : ${lat.last} ms`) + (wsStat.drops ? ` · ${wsStat.drops} coupure${wsStat.drops > 1 ? 's' : ''}` : '');
   el.className = 'dlat' + (m > 250 ? ' bad' : m > 120 ? ' warn' : '');
 }
-setInterval(() => { if (driveReady() && !$('drive').hidden) { try { state.ws.send('T,' + Math.round(performance.now())); } catch (_) { /* idem */ } } updateLat(); }, 1500);
+setInterval(() => { if (driveReady()) { try { state.ws.send('T,' + Math.round(performance.now())); } catch (_) { /* idem */ } } updateLat(); }, 1500);
+/* Lien bloqué (v33) : la socket reste « ouverte » mais plus rien n'arrive (PC parti sur un autre réseau, carte plantée, Wi-Fi saturé). Le sketch répond à un ping toutes les 1,5 s
+   et envoie le lidar plusieurs fois par seconde : 5 s de silence = lien mort, la page rouvre tout de suite la connexion au lieu d'attendre la fin du délai du navigateur. */
+setInterval(() => {
+  const ws = state.ws; if (!driveReady() || !wsStat.url || Date.now() - wsStat.lastRx < 5000) return;
+  ws.onclose = null; try { ws.close(); } catch (_) { /* déjà mort */ }
+  wsStat.drops++; wsStat.code = 1006; wsStat.downAt = Date.now(); clearTimers(); setConn('error');
+  setStatus('connStatus', 'Plus aucun message du robot depuis 5 s : la liaison est bloquée. Reconnexion…', 'warn');
+  state.ws = null; wsOpen(wsStat.url, 1);
+}, 1000);
 const autoLabel = () => 'Automatique' + (state.autoDist != null && isFinite(state.autoDist) ? ` · devant ${state.autoDist >= 400 ? '> 4 m' : state.autoDist + ' cm'}` : '');
 function updateAutoUi() {
   const b = $('drvAuto'); if (!b) return;

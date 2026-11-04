@@ -30,7 +30,8 @@
 //   R,profil[,accel_ms[,frein_ms]]  profil de vitesse des roues : 0 = carré (aucune rampe), 1 = trapézoïdal (rampe linéaire), 2 = courbe en S (défaut) ;
 //                   accel_ms = durée de la montée (défaut 150), frein_ms = durée du freinage (défaut 100). Les arrêts de sécurité restent immédiats.
 //   T,n             mesure de latence : le sketch répond E,T,n à cette page, la page calcule l'aller-retour
-//   Le sketch envoie aussi à la page : E,M (le robot bouge), E,R (il s'est arrêté), E,A,1 / E,A,0,raison (auto marche / arrêt), E,D,cm (distance devant)
+//   Le sketch envoie aussi à la page : E,M (le robot bouge), E,R (il s'est arrêté), E,A,1 / E,A,0,raison (auto marche / arrêt), E,D,cm (distance devant),
+//   à la connexion de la page : E,U,secondes (depuis combien de temps la carte tourne) et E,B,brownout|plantage|marche|autre (pourquoi elle a démarré)
 // La page répète D,... toutes les 100 ms tant qu'une touche est tenue.
 // Si plus rien n'arrive pendant 250 ms (touche relâchée, Wi-Fi coupé), le robot s'arrête : cet arrêt est aussi surveillé par un minuteur
 // matériel (toutes les 10 ms), donc il a lieu à l'heure même si la boucle principale est bloquée par un envoi Wi-Fi.
@@ -52,6 +53,7 @@
 #include <ld06.h>
 #include <Preferences.h>
 #include <esp_timer.h>
+#include <esp_system.h>
 #include "MecanumCar_v2.h"
 
 // --- Lidar ---
@@ -64,6 +66,8 @@ LD06 ld06(Serial2, LD06_PWM_PIN);
 // --- Wi-Fi : l'ESP32 crée son réseau ---
 const char* ssid = "Robot-LiDAR";
 const char* password = "password123";
+#define WIFI_CANAL 6                     // canal 2,4 GHz du réseau (1, 6 ou 11) : si les coupures viennent d'un autre réseau trop proche, essaie un autre canal
+esp_reset_reason_t raisonReset = ESP_RST_UNKNOWN;   // pourquoi la carte a (re)démarré : annoncé à la page à chaque connexion (E,B)
 
 WebServer server(80);
 WebSocketsServer webSocket = WebSocketsServer(81);
@@ -620,12 +624,19 @@ void traiterCommande(uint8_t num, uint8_t* payload, size_t length) {
 // --- WebSocket ---
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
   switch (type) {
-    case WStype_CONNECTED:
+    case WStype_CONNECTED: {
       Serial.printf("[%u] Page connectee\n", num);
       arreter();
+      // Pour la page : depuis combien de temps la carte tourne (E,U) et pourquoi elle a démarré (E,B) : un redémarrage par chute de tension
+      // (brownout) quand les moteurs démarrent coupe le Wi-Fi, et la page peut maintenant le dire.
+      char u[24]; snprintf(u, sizeof(u), "E,U,%lu", (unsigned long)(millis() / 1000)); webSocket.sendTXT(num, u);
+      const char* r = raisonReset == ESP_RST_BROWNOUT ? "brownout" : (raisonReset == ESP_RST_PANIC || raisonReset == ESP_RST_INT_WDT || raisonReset == ESP_RST_TASK_WDT || raisonReset == ESP_RST_WDT) ? "plantage"
+                      : raisonReset == ESP_RST_POWERON ? "marche" : "autre";
+      char b[24]; snprintf(b, sizeof(b), "E,B,%s", r); webSocket.sendTXT(num, b);
       break;
+    }
     case WStype_DISCONNECTED:
-      Serial.printf("[%u] Page deconnectee\n", num);
+      Serial.printf("[%u] Page deconnectee (%u client(s) restant(s) sur le reseau, carte allumee depuis %lu s)\n", num, (unsigned)WiFi.softAPgetStationNum(), (unsigned long)(millis() / 1000));
       autoArreter("page deconnectee", "main");
       arreter();                         // plus personne ne pilote : on s'arrête
       break;
@@ -937,8 +948,11 @@ void setup() {
   Serial.println();
   Serial.println("[1/4] Demarrage du Wi-Fi...");
 
+  raisonReset = esp_reset_reason();
+  Serial.printf("Demarrage : raison = %d%s\n", (int)raisonReset, raisonReset == ESP_RST_BROWNOUT ? " (BROWNOUT : chute de tension, batteries faibles ou moteurs trop gourmands)" : "");
   WiFi.mode(WIFI_AP);
-  bool ok = WiFi.softAP(ssid, password);          // mot de passe : 8 caracteres minimum
+  bool ok = WiFi.softAP(ssid, password, WIFI_CANAL, 0, 2);   // mot de passe : 8 caracteres minimum ; canal fixe ; 2 appareils au plus
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);            // puissance d'émission maximale
   WiFi.setSleep(false);                           // sans économie d'énergie du Wi-Fi : elle ajoute des dizaines de ms de latence aux ordres
   Serial.print("[1/4] Reseau ");
   Serial.print(ssid);
@@ -958,6 +972,7 @@ void setup() {
   server.begin();
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
+  webSocket.enableHeartbeat(10000, 3000, 2);      // ping toutes les 10 s : un lien mort (PC parti sur un autre réseau, veille) est détecté en ~16 s et le robot s'arrête
   Serial.println("[2/4] Serveur pret : page de test http://192.168.4.1/  et WebSocket port 81");
 
   Serial2.setRxBufferSize(4096);
