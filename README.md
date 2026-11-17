@@ -266,6 +266,8 @@ Tests du noyau (Node) : `node tests/web_loc_test.js lidar_web.html` (150 vérifi
 | `data_synth/` | 4 scans simulés et leurs vraies poses, pour essayer sans robot |
 | `exemples_synthetiques/` | images obtenues sur les données simulées (pas des données réelles) |
 | `tests/` | tests du noyau de calcul de la page (Node), dont la lecture des messages Wi-Fi |
+| `rapport.html` | rapport du TP en une page web (8 parties, résultats étiquetés robot réel / simulation, vidéo de synthèse intégrée) |
+| `rapport_video.mp4` | la vidéo de synthèse de 67 s, seule (déjà intégrée dans `rapport.html`) |
 | `RAPPORT_Jour1.md` | compte rendu (parties à compléter avec les résultats réels) |
 
 ## Tests
